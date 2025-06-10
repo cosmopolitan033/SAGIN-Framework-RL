@@ -21,13 +21,14 @@ This project implements a **Deep Reinforcement Learning-based framework** for **
             ↑     ↑       ↑       ↑        ↑
             ↓     ↓       ↓       ↓        ↓
 +------------------------------------------------------------+
-|           Ground Tier (IoT Regions + Sensors)              |
-|   (Local Data Generation, Periodic Activation, Content ID) |
+| Ground Tier (IoT Regions + Ground Vehicles + Sensors)      |
+| (Local Data Generation, Mobility, V2V/V2U Communication)   |
 +------------------------------------------------------------+
 ```
 
-- **IoT Devices** generate content and tasks.
-- **UAVs** aggregate, cache, and process tasks or offload them to neighbors or satellites.
+- **Ground Vehicles** move according to mobility models, communicate with each other (V2V) and UAVs (V2U), and generate/process tasks.
+- **IoT Devices** generate content periodically.
+- **UAVs** aggregate, cache, and process tasks or offload them to neighbors, ground vehicles, or satellites.
 - **Satellites** act as powerful compute/cache nodes with global coverage.
 
 ---
@@ -38,47 +39,59 @@ This project implements a **Deep Reinforcement Learning-based framework** for **
 |------------------------------|---------|
 | `main.py`                    | Runs PPO-driven simulation (learning agent) |
 | `compare_policies.py`        | Baseline simulation (popularity-based caching, greedy offloading) |
-| `sagin_env.py`               | Core environment managing UAVs, satellites, IoT regions |
+| `sagin_env.py`               | Core environment managing all three tiers (vehicles, UAVs, satellites) |
+| `ground_vehicle.py`          | Ground Vehicle class: mobility, V2V/V2U communication, task execution |
 | `uav.py`                     | UAV class: caching, task execution, energy handling |
 | `satellite.py`               | Satellite class: task queueing, execution, TTL-based eviction |
 | `iot_region.py`              | Models IoT regions, activation, content generation |
 | `ppo_gru_agent.py`           | PPO + GRU agent for intelligent caching decisions |
 | `content_popularity_predictor.py` | GRU-based popularity predictor (for future use) |
-| `communication_model.py`     | Channel modeling between UAVs and IoT devices |
+| `communication_model.py`     | Channel modeling between all network entities |
+| `visualize_network.py`       | Visualization of the three-tier architecture and metrics |
 
 ---
 
 ## 🔄 Simulation Flow
 
-1. **IoT Device Activation**  
-   At each time step, IoT devices generate content based on Zipf-distributed popularity.
+1. **Ground Vehicle Mobility**  
+   Ground vehicles move according to mobility models (random waypoint or route following).
 
-2. **UAV Aggregation**  
-   UAVs receive content, transmit to satellites (if connected), and consume energy.
+2. **V2V and V2U Link Updates**  
+   Vehicle-to-vehicle and vehicle-to-UAV communication links are updated based on positions.
 
-3. **OFDM Slot Allocation**  
+3. **Content Generation**  
+   - IoT devices generate content based on Zipf-distributed popularity
+   - Ground vehicles generate content with different types (sensor, image, video, map)
+
+4. **Content Aggregation**  
+   UAVs receive content from IoT devices and ground vehicles in their coverage area.
+
+5. **OFDM Slot Allocation**  
    UAVs get randomly assigned slots to communicate with satellites.
 
-4. **Satellite Caching**  
+6. **Satellite Caching**  
    Satellites receive and store content with TTL constraints.
 
-5. **Task Generation**  
-   UAVs generate computational tasks that need associated content.
+7. **Task Generation**  
+   - UAVs generate computational tasks that need associated content
+   - Ground vehicles generate tasks with different priorities and deadlines
 
-6. **Offloading Decisions**  
-   - First try local cache  
-   - Then neighbor UAVs  
-   - Then satellite  
+8. **Offloading Decisions**  
+   - For UAV tasks: Try local, then neighbor UAVs, then ground vehicles, then satellite
+   - For vehicle tasks: Try local, then V2V neighbors, then connected UAV, then satellite
    - If not found, task is dropped
 
-7. **Task Execution**  
-   UAVs and satellites execute queued tasks if delays are within bounds.
+9. **Task Execution**  
+   Ground vehicles, UAVs, and satellites execute queued tasks if delays are within bounds.
 
-8. **Caching Decision via PPO**  
-   A GRU-based PPO agent decides which content to cache in UAVs based on observed energy, content popularity, neighbor loads, etc.
+10. **Caching Decision via PPO**  
+    A GRU-based PPO agent decides which content to cache in UAVs and vehicles based on observed metrics.
 
-9. **Eviction & Energy Update**  
-   Expired content is evicted. UAV energy is updated and checked—simulation halts if any UAV's energy is depleted.
+11. **Eviction & Energy Update**  
+    Expired content is evicted. Energy is updated for all entities—simulation halts if any UAV's energy is depleted.
+
+12. **Visualization**  
+    Network structure and metrics are visualized periodically to track system performance.
 
 ---
 

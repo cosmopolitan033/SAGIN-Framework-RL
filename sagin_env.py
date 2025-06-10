@@ -1,55 +1,228 @@
-
 import numpy as np
 from iot_region import IoTRegion
 from satellite import Satellite
 from uav import UAV
+from ground_vehicle import GroundVehicle
 from communication_model import compute_rate_general
 
 class SystemDownException(Exception):
     pass
 
 class SAGINEnv:
-    def __init__(self, X, Y, duration, cache_size, compute_power_uav, compute_power_sat, energy, max_queue, num_sats, num_iot_per_region, max_active_iot, ofdm_slots):
+    def __init__(self, X, Y, duration, cache_size, compute_power_uav, compute_power_sat, compute_power_gv, energy, max_queue, num_sats, num_iot_per_region, max_active_iot, ofdm_slots, num_vehicles=10):
         self.X, self.Y = X, Y
-        self.uavs = {(x, y): UAV(x, y, X, Y, cache_size, max_queue, duration, compute_power_uav, energy, num_iot_per_region) for x in range(X) for y in range(Y)}
-        self.iot_regions = {(x, y): IoTRegion(num_iot_per_region, max_active_iot, duration, region_coords=(x, y)) for x in range(X) for y in range(Y)}
+        # Ground tier - Ground Vehicles
+        self.vehicles = {}
+        for i in range(num_vehicles):
+            # Random initial position within grid
+            x = np.random.uniform(0, X * 100)
+            y = np.random.uniform(0, Y * 100)
+            initial_position = (x, y, 0)  # z=0 for ground level
+            
+            # Decide mobility model (80% random waypoint, 20% route following)
+            mobility_model = 'random_waypoint' if np.random.random() < 0.8 else 'route_following'
+            
+            # Create vehicle
+            vehicle = GroundVehicle(
+                vehicle_id=i,
+                initial_position=initial_position,
+                mobility_model=mobility_model,
+                cache_size=cache_size // 2,  # Half the cache size of UAVs
+                compute_power=compute_power_gv,
+                energy=energy,
+                max_queue=max_queue,
+                duration=duration
+            )
+            
+            # If route following, create a simple route (series of waypoints)
+            if mobility_model == 'route_following':
+                num_waypoints = np.random.randint(3, 10)
+                route = []
+                for _ in range(num_waypoints):
+                    wx = np.random.uniform(0, X * 100)
+                    wy = np.random.uniform(0, Y * 100)
+                    route.append((wx, wy, 0))
+                vehicle.route = route
+                
+            self.vehicles[i] = vehicle
+            
+        # Air tier - UAVs
+        self.uavs = {(x, y): UAV(x, y, X, Y, cache_size, max_queue, duration, compute_power_uav, energy, num_iot_per_region) 
+                    for x in range(X) for y in range(Y)}
+        
+        # IoT regions for content generation
+        self.iot_regions = {(x, y): IoTRegion(num_iot_per_region, max_active_iot, duration, region_coords=(x, y)) 
+                           for x in range(X) for y in range(Y)}
+        
+        # Link IoT regions to UAVs
         for coord in self.uavs:
             self.uavs[coord].region = self.iot_regions[coord]
-        self.sats = [Satellite(s, 1000, self._generate_coverage(), duration, position=(s*100, 500, 550000), compute_power=compute_power_sat) for s in range(num_sats)]
+            
+        # Space tier - Satellites
+        self.sats = [Satellite(s, 1000, self._generate_coverage(), duration, 
+                              position=(s*100, 500, 550000), compute_power=compute_power_sat) 
+                    for s in range(num_sats)]
+        
+        # Environment parameters
         self.duration = duration
         self.ofdm_slots = ofdm_slots
-        self.connected_uavs = set()
+        
+        # Communication links
+        self.connected_uavs = set()  # UAVs with satellite link
+        self.vehicle_uav_assignments = {}  # {vehicle_id: (x, y)} mapping vehicles to serving UAVs
+        
+        # Content and task management
         self.global_satellite_content_pool = {}  # cid → metadata dict
         self.task_log = []
         self.dropped_tasks = 0
         self.success_log = []
+        
+        # Time management
         self.g_timestep = -1
-        self.current_time=0
+        self.current_time = 0
+        
+        # Statistics
         self.task_stats = {
+            'ground_vehicle': {},  # {vehicle_id: {'generated': int, 'completed': int, 'successful': int}}
             'uav': {},  # {(x,y): {'generated': int, 'completed': int, 'successful': int}}
             'satellite': {}  # {sat_id: {'received': int, 'completed': int, 'successful': int}}
         }
 
     def collect_iot_data(self):
         self.g_timestep += 1
+        
+        # Update vehicle positions based on mobility models
+        self.update_vehicle_positions()
+        
+        # Update V2V communication links
+        self.update_v2v_links()
+        
+        # Assign vehicles to nearest UAVs
+        self.assign_vehicles_to_uavs()
+        
+        # 1. Collect data from IoT regions
         for (x, y), uav in self.uavs.items():
             predicted = self.iot_regions[(x, y)].sample_active_devices()
             content_list = self.iot_regions[(x, y)].generate_content(predicted, self.g_timestep, grid_coord=(x, y))
             content_dict = {tuple(c['id']): c for c in content_list}
             uav.aggregate_content(content_dict)
+            
+        # 2. Collect data generated by ground vehicles
+        for v_id, vehicle in self.vehicles.items():
+            # Generate 1-3 pieces of content per vehicle with some probability
+            if np.random.random() < 0.4:  # 40% chance of generating content
+                num_contents = np.random.randint(1, 4)
+                vehicle_contents = []
+                
+                for i in range(num_contents):
+                    # Content ID based on vehicle ID and timestamp for uniqueness
+                    content_id = [v_id, self.g_timestep, i]
+                    
+                    # Content properties
+                    content_type = np.random.choice(['sensor', 'image', 'video', 'map'])
+                    if content_type == 'sensor':
+                        size = np.random.uniform(0.01, 0.1)  # Small sensor data (MB)
+                        ttl = np.random.uniform(10, 30)  # Short TTL
+                    elif content_type == 'image':
+                        size = np.random.uniform(0.5, 2.0)  # Medium-sized images (MB)
+                        ttl = np.random.uniform(60, 180)  # Medium TTL
+                    elif content_type == 'video':
+                        size = np.random.uniform(5.0, 20.0)  # Large video files (MB)
+                        ttl = np.random.uniform(300, 600)  # Long TTL
+                    else:  # map
+                        size = np.random.uniform(1.0, 5.0)  # Map data (MB)
+                        ttl = np.random.uniform(600, 1200)  # Very long TTL
+                    
+                    # Create content metadata
+                    content = {
+                        'id': content_id,
+                        'size': size,
+                        'type': content_type,
+                        'generation_time': self.g_timestep * self.duration,
+                        'ttl': ttl,
+                        'generated_by': f'vehicle_{v_id}',
+                        'received_by_uav': self.g_timestep * self.duration
+                    }
+                    
+                    vehicle_contents.append(content)
+                
+                # Store content in vehicle's aggregated content
+                for content in vehicle_contents:
+                    vehicle.aggregated_content[tuple(content['id'])] = content
+                
+                # If vehicle is assigned to a UAV, share content with UAV
+                if v_id in self.vehicle_uav_assignments:
+                    uav_x, uav_y = self.vehicle_uav_assignments[v_id]
+                    uav = self.uavs[(uav_x, uav_y)]
+                    
+                    # Calculate V2U transmission delay
+                    vx, vy, _ = vehicle.position
+                    ux, uy, uz = uav_x * 100 + 50, uav_y * 100 + 50, 100
+                    
+                    # Distance between vehicle and UAV
+                    dist = np.sqrt((vx - ux)**2 + (vy - uy)**2 + uz**2)
+                    
+                    # Calculate transmission rate for each content
+                    for content in vehicle_contents:
+                        # Compute rate for this specific V2U link
+                        rate, ok = compute_rate_general(
+                            sender_pos=(vx, vy, 0),
+                            receiver_pos=(ux, uy, uz),
+                            bandwidth=5e6,  # 5 MHz
+                            P_tx=1.0,  # Vehicle transmit power
+                            fc=2.4e9,  # 2.4 GHz
+                            G_tx=2.0,  # Vehicle antenna gain
+                            G_rx=5.0,  # UAV antenna gain
+                            noise=1e-12,
+                            fading=1.0
+                        )
+                        
+                        if not ok:
+                            continue
+                            
+                        # Calculate transmission delay
+                        content_size_bits = content['size'] * 8 * 1e6  # MB to bits
+                        tx_delay = content_size_bits / rate
+                        
+                        # Add propagation delay (negligible for short distances but included for completeness)
+                        prop_delay = dist / 3e8  # Speed of light
+                        
+                        # Create content for UAV with adjusted timestamp
+                        uav_content = content.copy()
+                        uav_content['received_by_uav'] = self.g_timestep * self.duration + tx_delay + prop_delay
+                        uav_content['source_vehicle'] = v_id
+                        
+                        # Add to UAV's aggregated content
+                        uav.aggregated_content[tuple(uav_content['id'])] = uav_content
 
     def generate_and_offload_tasks(self):
-        for (x, y), uav in self.uavs.items(): #this loop generate and offload all the task
+        # 1. Generate and offload tasks from UAVs
+        for (x, y), uav in self.uavs.items():
             tasks = uav.generate_tasks(self.X, self.Y, self.g_timestep)
             for task in tasks:
                 task['remaining_cpu'] = task['required_cpu']
-                offload_target = self.offload_task(task, (x, y), uav.uav_pos)
+                task['source_tier'] = 'uav'
+                offload_target = self.offload_task(task, 'uav', (x, y), uav.uav_pos)
                 uav.total_tasks += 1
-                self.task_log.append({"task_id": task['task_id'], "assigned_to": offload_target})
+                self.task_log.append({"task_id": task['task_id'], "source": f"uav_{x}_{y}", "assigned_to": offload_target})
 
                 if (x, y) not in self.task_stats['uav']:
                     self.task_stats['uav'][(x, y)] = {'generated': 0, 'completed': 0, 'successful': 0}
                 self.task_stats['uav'][(x, y)]['generated'] += 1
+                
+        # 2. Generate and offload tasks from ground vehicles
+        for v_id, vehicle in self.vehicles.items():
+            tasks = vehicle.generate_tasks(self.g_timestep)
+            for task in tasks:
+                task['remaining_cpu'] = task['required_cpu']
+                task['source_tier'] = 'ground_vehicle'
+                offload_target = self.offload_task_from_vehicle(task, v_id)
+                vehicle.total_tasks += 1
+                self.task_log.append({"task_id": task['task_id'], "source": f"vehicle_{v_id}", "assigned_to": offload_target})
+
+                if v_id not in self.task_stats['ground_vehicle']:
+                    self.task_stats['ground_vehicle'][v_id] = {'generated': 0, 'completed': 0, 'successful': 0}
+                self.task_stats['ground_vehicle'][v_id]['generated'] += 1
 
     def _generate_coverage(self):
         return [{(i, j) for i in range(self.X) for j in range(self.Y)} for _ in range(10)]
@@ -141,26 +314,44 @@ class SAGINEnv:
 
         print(f"Evicted {len(expired)} expired content items from global_satellite_content_pool.")
 
-    def offload_task(self, task, uav_coord, uav_pos):
+    def offload_task(self, task, source_tier, uav_coord, uav_pos):
+        """Offload task from UAV to appropriate execution entity"""
         x, y = uav_coord
         uav = self.uavs[(x, y)]
         cid = tuple(task['content_id'])
         task_id = task['task_id']
 
+        # Strategy 1: Try local execution first
         if cid in uav.cache_storage or cid in uav.aggregated_content:
             uav.receive_task(task, from_coord=(x, y))
             print(f"[TASK {task_id}] Content {cid} found locally at UAV ({x},{y}) — assigned LOCAL")
             return 'local'
 
+        # Strategy 2: Check neighboring UAVs
         for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             nx, ny = x + dx, y + dy
             if (nx, ny) in self.uavs:
                 neighbor = self.uavs[(nx, ny)]
-                if cid in neighbor .cache_storage or cid in neighbor.aggregated_content:
+                if cid in neighbor.cache_storage or cid in neighbor.aggregated_content:
                     neighbor.receive_task(task, from_coord=(x, y))
                     print(f"[TASK {task_id}] Content {cid} found at NEIGHBOR UAV ({nx},{ny}) — offloaded")
-                    return f'neighbor_{nx}_{ny}'
+                    return f'neighbor_uav_{nx}_{ny}'
 
+        # Strategy 3: Check vehicles in the grid cell
+        vehicles_in_cell = []
+        for v_id, vehicle in self.vehicles.items():
+            grid_x, grid_y = vehicle.get_position_as_grid(self.X, self.Y)
+            if (grid_x, grid_y) == (x, y):
+                vehicles_in_cell.append((v_id, vehicle))
+
+        # Check if any vehicle has the content
+        for v_id, vehicle in vehicles_in_cell:
+            if cid in vehicle.cache_storage or cid in vehicle.aggregated_content:
+                if vehicle.receive_task(task):  # Check if task was successfully received
+                    print(f"[TASK {task_id}] Content {cid} found at VEHICLE {v_id} — offloaded")
+                    return f'vehicle_{v_id}'
+
+        # Strategy 4: Check satellite if UAV has connection
         if (x, y) in self.connected_uavs:
             for sat in self.sats:
                 if (x, y) in self.satellite_slots.get(sat.sat_id, []) and cid in self.global_satellite_content_pool:
@@ -171,28 +362,117 @@ class SAGINEnv:
                     print(f"[TASK {task_id}] Content {cid} found in SATELLITE {sat.sat_id} — offloaded")
                     return f'satellite_{sat.sat_id}'
 
-
+        # Strategy 5: If all else fails, drop the task
         self.dropped_tasks += 1
         print(f"[TASK {task_id}] Content {cid} NOT found anywhere — DROPPED")
         return 'dropped'
 
-    def step(self):
+    def offload_task_from_vehicle(self, task, vehicle_id):
+        """Offload task from a ground vehicle to appropriate execution entity"""
+        vehicle = self.vehicles[vehicle_id]
+        cid = tuple(task['content_id'])
+        task_id = task['task_id']
+        
+        # Strategy 1: Try local execution on the vehicle itself
+        if cid in vehicle.cache_storage or cid in vehicle.aggregated_content:
+            vehicle.receive_task(task)
+            print(f"[TASK {task_id}] Content {cid} found locally at VEHICLE {vehicle_id} — assigned LOCAL")
+            return f'local_vehicle_{vehicle_id}'
+        
+        # Strategy 2: Check V2V communication with other vehicles
+        for neighbor_id in vehicle.neighbor_vehicles:
+            neighbor = self.vehicles[neighbor_id]
+            if vehicle.can_offload_to_vehicle(task, neighbor):
+                if neighbor.receive_task(task, from_vehicle_id=vehicle_id):
+                    print(f"[TASK {task_id}] Content {cid} found at NEIGHBOR VEHICLE {neighbor_id} — offloaded via V2V")
+                    return f'neighbor_vehicle_{neighbor_id}'
+        
+        # Strategy 3: Try offloading to connected UAV
+        if vehicle.connected_uav:
+            uav_x, uav_y = vehicle.connected_uav
+            uav = self.uavs[(uav_x, uav_y)]
+            
+            if cid in uav.cache_storage or cid in uav.aggregated_content:
+                uav.receive_task(task, from_coord=(vehicle.position[0], vehicle.position[1]))
+                print(f"[TASK {task_id}] Content {cid} found at connected UAV ({uav_x},{uav_y}) — offloaded via V2U")
+                return f'connected_uav_{uav_x}_{uav_y}'
+            
+            # Strategy 3.1: If UAV doesn't have content, try UAV's satellite connection
+            if (uav_x, uav_y) in self.connected_uavs:
+                for sat in self.sats:
+                    if ((uav_x, uav_y) in self.satellite_slots.get(sat.sat_id, []) and 
+                        cid in self.global_satellite_content_pool):
+                        
+                        sat.receive_task(task, from_coord=uav.uav_pos)
+                        
+                        if sat.sat_id not in self.task_stats['satellite']:
+                            self.task_stats['satellite'][sat.sat_id] = {
+                                'received': 0, 'completed': 0, 'successful': 0
+                            }
+                            
+                        self.task_stats['satellite'][sat.sat_id]['received'] += 1
+                        print(f"[TASK {task_id}] Content {cid} found in SATELLITE {sat.sat_id} — offloaded via V2U-satellite")
+                        return f'satellite_{sat.sat_id}'
+        
+        # Strategy 4: If all else fails, drop the task
+        self.dropped_tasks += 1
+        print(f"[TASK {task_id}] From VEHICLE {vehicle_id}, content {cid} NOT found anywhere — DROPPED")
+        return 'dropped'
+
+    def step(self, actions=None, timestep=None):
+        # Update vehicle positions and V2U/V2V connections
+        self.update_vehicle_positions()
+        self.update_v2v_links()
+        self.assign_vehicles_to_uavs()
+        
+        # === Ground vehicles execute tasks ===
+        for v_id, vehicle in self.vehicles.items():
+            # Execute tasks in ground vehicle
+            completed = vehicle.execute_tasks(self.g_timestep)
+            success = sum(
+                t.get('delay', {}).get('total_delay', float('inf')) <= t.get('delay_bound', float('inf'))
+                for t in completed
+            )
+
+            # Initialize vehicle stats if not present
+            if v_id not in self.task_stats['ground_vehicle']:
+                self.task_stats['ground_vehicle'][v_id] = {'generated': 0, 'completed': 0, 'successful': 0}
+
+            self.task_stats['ground_vehicle'][v_id]['completed'] += len(completed)
+            self.task_stats['ground_vehicle'][v_id]['successful'] += success
+
+            # Update vehicle cache
+            vehicle.update_cache(
+                self.g_timestep,
+                global_satellite_content_pool=self.global_satellite_content_pool,
+                is_connected_to_satellite=False  # Vehicles connect to satellites via UAVs
+            )
+            vehicle.clear_aggregated_content()
+
+            # Check vehicle energy
+            if vehicle.energy <= 0:
+                print(f"[WARNING] Vehicle {v_id} has drained all energy at {self.g_timestep}. Removing from simulation.")
+                # Instead of crashing simulation, just remove the vehicle
+                del self.vehicles[v_id]
+                if v_id in self.vehicle_uav_assignments:
+                    del self.vehicle_uav_assignments[v_id]
+        
+        # === UAV executes tasks ===
         for (x, y), uav in self.uavs.items():
-            # === UAV executes tasks ===
             completed = uav.execute_tasks(self.g_timestep)
             success = sum(
                 t.get('delay', {}).get('total_delay', float('inf')) <= t.get('delay_bound', float('inf'))
                 for t in completed
             )
 
-            # === Initialize UAV stats if not present ===
+            # Initialize UAV stats if not present
             if (x, y) not in self.task_stats['uav']:
                 self.task_stats['uav'][(x, y)] = {'generated': 0, 'completed': 0, 'successful': 0}
 
             self.task_stats['uav'][(x, y)]['completed'] += len(completed)
             self.task_stats['uav'][(x, y)]['successful'] += success
 
-            # === UAV maintenance ===
+            # UAV maintenance
             uav.update_cache(
                 self.g_timestep,
                 global_satellite_content_pool=self.global_satellite_content_pool,
@@ -200,9 +480,9 @@ class SAGINEnv:
             )
             uav.clear_aggregated_content()
 
-            # === Energy usage ===
-            #uav.energy -= 150 * self.duration  # hovering + caching cost
-            #uav.energy_used_this_slot += 150 * self.duration
+            # Energy usage (explicit hovering cost)
+            uav.energy -= 150 * self.duration  # hovering cost
+            uav.energy_used_this_slot += 150 * self.duration
 
             if uav.energy <= 0:
                 print(f"[CRITICAL] UAV at ({x}, {y}) has drained all energy at {self.g_timestep}. SYSTEM DOWN.")
@@ -222,5 +502,45 @@ class SAGINEnv:
             self.task_stats['satellite'][sat.sat_id]['completed'] += len(completed)
             self.task_stats['satellite'][sat.sat_id]['successful'] += success
 
-            # === Satellite eviction ===
+        # === Satellite content eviction ===
         self.evict_expired_content()
+        
+    def update_vehicle_positions(self):
+        """Update positions of all ground vehicles based on their mobility models"""
+        for v_id, vehicle in self.vehicles.items():
+            vehicle.move(self.g_timestep)
+            
+    def update_v2v_links(self):
+        """Update vehicle-to-vehicle communication links based on proximity"""
+        for v_id, vehicle in self.vehicles.items():
+            vehicle.update_v2v_links(self.vehicles)
+            
+    def assign_vehicles_to_uavs(self):
+        """Assign each vehicle to the nearest UAV for V2U communication"""
+        self.vehicle_uav_assignments = {}
+        
+        for v_id, vehicle in self.vehicles.items():
+            # Get vehicle position
+            vx, vy, _ = vehicle.position
+            
+            # Find closest UAV
+            min_dist = float('inf')
+            closest_uav = None
+            
+            for (x, y), uav in self.uavs.items():
+                # UAV position
+                ux = x * 100 + 50  # Center of grid cell
+                uy = y * 100 + 50
+                uz = 100  # UAV height
+                
+                # Calculate Euclidean distance
+                dist = np.sqrt((vx - ux)**2 + (vy - uy)**2 + uz**2)
+                
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_uav = (x, y)
+            
+            # Assign vehicle to closest UAV
+            if closest_uav is not None:
+                self.vehicle_uav_assignments[v_id] = closest_uav
+                vehicle.connected_uav = closest_uav

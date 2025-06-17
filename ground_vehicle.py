@@ -11,10 +11,10 @@ class GroundVehicle:
         self.speed = np.random.uniform(5, 30)  # m/s (18-108 km/h)
         self.direction = np.random.uniform(0, 2*np.pi)  # Random initial direction in radians
         
-        # Resource constraints
-        self.energy = energy
+        # Resource constraints - energy not considered for vehicles
+        self.energy = float('inf')  # Infinite energy - vehicles don't consider energy
         self.energy_used_this_slot = 0.0
-        self.compute_power = compute_power
+        self.compute_power = 0  # No local computation ability
         
         # Storage
         self.cache_capacity_mb = cache_size
@@ -139,56 +139,10 @@ class GroundVehicle:
         return True
 
     def execute_tasks(self, timestep):
-        """Execute tasks in the queue based on priority and available compute power"""
-        if not self.task_queue:
-            return []
-            
-        available_compute = self.compute_power * self.duration
-        completed_tasks = []
-        remaining_tasks = []
-        
-        for task in self.task_queue:
-            # Check if we can complete this task in current timestep
-            if task['remaining_cpu'] <= available_compute:
-                # Complete the task
-                compute_used = task['remaining_cpu']
-                available_compute -= compute_used
-                
-                # Calculate delay information
-                end_time = timestep * self.duration
-                proc_delay = task.get('required_cpu', 0) / self.compute_power
-                
-                task['delay'] = {
-                    'processing_delay': proc_delay,
-                    'total_delay': end_time - task['generation_time']
-                }
-                
-                # Mark as completed
-                task['completed_time'] = end_time
-                task['completed_by'] = f'gv_{self.vehicle_id}'
-                completed_tasks.append(task)
-                
-                # Update energy usage (computation)
-                energy_used = compute_used * 0.1  # Energy per compute unit
-                self.energy -= energy_used
-                self.energy_used_this_slot += energy_used
-                
-                # Update success metrics
-                if task.get('delay', {}).get('total_delay', float('inf')) <= task.get('delay_bound', float('inf')):
-                    self.tasks_completed_within_bound += 1
-                    
-            elif available_compute > 0:
-                # Partially execute task
-                task['remaining_cpu'] -= available_compute
-                available_compute = 0
-                remaining_tasks.append(task)
-            else:
-                # Cannot process this task now
-                remaining_tasks.append(task)
-                
-        # Update task queue
-        self.task_queue = remaining_tasks
-        return completed_tasks
+        """Vehicles cannot execute tasks locally - just forward them"""
+        # All tasks remain in the queue for potential forwarding
+        # Vehicle doesn't have computing capability
+        return []
 
     def generate_tasks(self, timestep):
         """Generate computational tasks based on content available"""
@@ -300,17 +254,13 @@ class GroundVehicle:
         self.aggregated_content = {}
 
     def can_offload_to_vehicle(self, task, vehicle):
-        """Check if a task can be offloaded to another vehicle"""
+        """Check if a task can be offloaded to another vehicle for hopping purposes"""
         # Check if target vehicle is in range
         if vehicle.vehicle_id not in self.v2v_links:
             return False
             
-        # Check if target has the required content
-        cid = task['content_id']
-        if cid not in vehicle.cache_storage and cid not in vehicle.aggregated_content:
-            return False
-            
-        # Check if target has room in queue
+        # For hopping, we don't need the content - we're just relaying to a UAV
+        # But we do need queue space
         if len(vehicle.task_queue) >= vehicle.max_queue:
             return False
             

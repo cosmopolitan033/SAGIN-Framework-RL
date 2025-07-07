@@ -47,12 +47,10 @@ python examples/sagin_demo.py
 ### Interactive Demo Options
 The unified demo provides multiple simulation modes:
 - **🧪 Test Mode**: Quick validation (5 steps)
-- **🎓 Simple Demo**: Educational overview (100 epochs)
 - **📊 Standard Simulation**: Medium logging (200 epochs)
 - **🔍 Detailed Simulation**: High logging (100 epochs)
 - **🚀 Full Simulation**: Low logging (500 epochs)
 - **🎯 Custom Simulation**: Choose your own settings
-- **🔄 Legacy Mode**: Compatible with old basic_simulation.py behavior
 
 ### Basic Usage
 ```python

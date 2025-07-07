@@ -162,69 +162,6 @@ class SAGINDemo:
         
         return True
     
-    def run_simple_demo(self):
-        """Simple demo mode - educational overview."""
-        print("🎓 SAGIN SYSTEM SIMPLE DEMO")
-        print("="*50)
-        
-        # Show architecture explanation
-        print("""
-SAGIN System Architecture:
-------------------------
-🌍 GROUND LAYER: Vehicles generate computational tasks
-✈️  AIR LAYER: UAVs process tasks locally or forward to satellites  
-🛰️  SPACE LAYER: Satellites handle overflow tasks with high capacity
-
-Key Features:
-• Hierarchical task offloading decisions
-• Dynamic UAV repositioning based on demand
-• Energy-aware operations and load balancing
-• Real-time latency optimization
-        """)
-        
-        # Create and run network
-        network = self.create_network("medium")
-        network.initialize_simulation()
-        self.add_burst_events(network, "light")
-        
-        print(f"\nRunning {network.params.total_epochs}-epoch simulation...")
-        print("-" * 50)
-        
-        # Track metrics
-        snapshots = []
-        for epoch in range(network.params.total_epochs):
-            step_results = network.step()
-            
-            if epoch % 20 == 0:
-                metrics = network.metrics
-                snapshot = {
-                    'epoch': epoch,
-                    'generated': metrics.total_tasks_generated,
-                    'completed': metrics.total_tasks_completed,
-                    'success_rate': metrics.success_rate,
-                    'avg_latency': metrics.average_latency,
-                    'uav_util': metrics.uav_utilization
-                }
-                snapshots.append(snapshot)
-                
-                print(f"Epoch {epoch:3d}: Generated: {snapshot['generated']:3d}, "
-                      f"Completed: {snapshot['completed']:3d}, "
-                      f"Success: {snapshot['success_rate']:.3f}, "
-                      f"Latency: {snapshot['avg_latency']:.3f}s")
-        
-        # Show final results
-        self.print_summary(network)
-        
-        # Show progression
-        print(f"\nPerformance Progression:")
-        print("Epoch | Generated | Completed | Success | Latency | UAV_Util")
-        print("-" * 60)
-        for s in snapshots:
-            print(f"{s['epoch']:5d} | {s['generated']:9d} | {s['completed']:9d} | "
-                  f"{s['success_rate']:7.3f} | {s['avg_latency']:7.3f} | {s['uav_util']:8.3f}")
-        
-        return network
-    
     def run_detailed_simulation(self, logging_level: str = "medium"):
         """Run detailed simulation with configurable logging."""
         print("🔍 SAGIN DETAILED SIMULATION")
@@ -295,43 +232,6 @@ Key Features:
             print("="*50)
             network.print_decision_analysis(min(50, num_epochs))
             network.print_resource_utilization_summary(min(25, num_epochs))
-        
-        return network
-    
-    def run_legacy_mode(self):
-        """Run simulation in legacy basic_simulation.py mode."""
-        print("🔄 LEGACY MODE (basic_simulation.py compatible)")
-        print("="*60)
-        
-        # Create large network like original basic_simulation.py
-        network = self.create_network("large")
-        
-        # Ask for detailed logging like original
-        print("\nSelect simulation mode:")
-        print("1. Standard simulation (faster, less detailed)")
-        print("2. Detailed logging simulation (slower, comprehensive logs)")
-        
-        try:
-            choice = input("Enter choice (1 or 2): ").strip()
-            detailed_logging = (choice == '2')
-        except (EOFError, KeyboardInterrupt):
-            detailed_logging = False
-            print("\nDefaulting to standard simulation...")
-        
-        # Run simulation like original
-        if detailed_logging:
-            print("\n🔍 Running simulation with detailed process logging...")
-            network = self.run_detailed_simulation("medium")
-        else:
-            print("\n📊 Running standard simulation...")
-            network = self.run_detailed_simulation("low")
-        
-        # Show additional analysis for detailed runs
-        if detailed_logging:
-            print("\n🔍 DETAILED ANALYSIS")
-            print("="*50)
-            network.print_decision_analysis(50)
-            network.print_resource_utilization_summary(25)
         
         return network
     
@@ -466,36 +366,31 @@ def main():
     while True:
         print("\nSelect simulation mode:")
         print("1. 🧪 Test Mode (Quick validation - 5 steps)")
-        print("2. 🎓 Simple Demo (Educational overview - 100 epochs)")
-        print("3. 📊 Standard Simulation (Medium logging - 200 epochs)")
-        print("4. 🔍 Detailed Simulation (High logging - 100 epochs)")
-        print("5. 🚀 Full Simulation (Low logging - 500 epochs)")
-        print("6. 🎯 Custom Simulation (Choose your settings)")
-        print("7. 🔄 Legacy Mode (basic_simulation.py compatible)")
-        print("8. ❌ Exit")
+        print("2. 📊 Standard Simulation (Medium logging - 200 epochs)")
+        print("3. 🔍 Detailed Simulation (High logging - 100 epochs)")
+        print("4. 🚀 Full Simulation (Low logging - 500 epochs)")
+        print("5. 🎯 Custom Simulation (Choose your settings)")
+        print("6. ❌ Exit")
         
         try:
-            choice = input("\nEnter choice (1-8): ").strip()
+            choice = input("\nEnter choice (1-6): ").strip()
             
             if choice == '1':
                 demo.run_test_mode()
                 
             elif choice == '2':
-                network = demo.run_simple_demo()
-                
-            elif choice == '3':
                 network = demo.run_detailed_simulation("low")
                 demo.print_summary(network)
                 
-            elif choice == '4':
+            elif choice == '3':
                 network = demo.run_detailed_simulation("medium")
                 demo.print_summary(network)
                 
-            elif choice == '5':
+            elif choice == '4':
                 network = demo.run_detailed_simulation("low")
                 demo.print_summary(network)
                 
-            elif choice == '6':
+            elif choice == '5':
                 # Custom simulation
                 print("\nCustom Simulation Settings:")
                 scale = input("Network scale (small/medium/large) [medium]: ").strip() or "medium"
@@ -510,11 +405,7 @@ def main():
                 network = demo.run_detailed_simulation(logging)
                 demo.print_summary(network)
                 
-            elif choice == '7':
-                network = demo.run_legacy_mode()
-                demo.print_summary(network)
-                
-            elif choice == '8':
+            elif choice == '6':
                 print("Goodbye! 👋")
                 break
                 
@@ -522,7 +413,7 @@ def main():
                 print("Invalid choice. Please try again.")
                 continue
             
-            if choice in ['2', '3', '4', '5', '6', '7']:
+            if choice in ['2', '3', '4', '5']:
                 # Post-simulation options
                 print("\nPost-simulation options:")
                 print("p. 📈 Plot results")

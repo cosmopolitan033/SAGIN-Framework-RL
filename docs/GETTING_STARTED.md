@@ -143,10 +143,8 @@ python examples/sagin_demo.py
 
 The `sagin_demo.py` provides all simulation modes:
 - Test mode for quick validation
-- Simple demo for learning
 - Standard, detailed, and full simulations
 - Custom simulation with your own settings
-- Legacy mode for backwards compatibility
 
 ### 2. Customize Your Simulation
 

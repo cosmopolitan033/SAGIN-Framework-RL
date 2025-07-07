@@ -75,7 +75,7 @@ def add_burst_events(network: SAGINNetwork):
     print("Added burst events to regions 1, 2, and 3")
 
 
-def run_simulation(network: SAGINNetwork, num_epochs: int = 500):
+def run_simulation(network: SAGINNetwork, num_epochs: int = 500, detailed_logging: bool = False):
     """Run the SAGIN simulation."""
     print(f"\nStarting simulation for {num_epochs} epochs...")
     
@@ -110,8 +110,23 @@ def run_simulation(network: SAGINNetwork, num_epochs: int = 500):
                   f"Avg latency: {metrics.average_latency:.3f}s, "
                   f"Load imbalance: {metrics.load_imbalance:.3f}")
     
-    # Run simulation
-    network.run_simulation(num_epochs, progress_callback)
+    # Run simulation with detailed logging if requested
+    if detailed_logging:
+        # Run first few epochs with detailed logging
+        print("\n🔍 Running initial epochs with detailed logging...")
+        network.run_simulation_with_detailed_logging(
+            min(50, num_epochs), 
+            detailed_interval=5,
+            progress_callback=progress_callback
+        )
+        
+        # Continue with regular logging for remaining epochs
+        if num_epochs > 50:
+            print(f"\n📊 Continuing simulation with regular logging for {num_epochs - 50} epochs...")
+            network.run_simulation(num_epochs - 50, progress_callback)
+    else:
+        # Run simulation normally
+        network.run_simulation(num_epochs, progress_callback)
     
     return metrics_history
 
@@ -243,11 +258,35 @@ def main():
     # Create network
     network = create_sample_network()
     
+    # Ask user for detailed logging option
+    print("\nSelect simulation mode:")
+    print("1. Standard simulation (faster, less detailed)")
+    print("2. Detailed logging simulation (slower, comprehensive logs)")
+    
+    try:
+        choice = input("Enter choice (1 or 2): ").strip()
+        detailed_logging = (choice == '2')
+    except (EOFError, KeyboardInterrupt):
+        detailed_logging = False
+        print("\nDefaulting to standard simulation...")
+    
     # Run simulation
-    metrics_history = run_simulation(network, num_epochs=500)
+    if detailed_logging:
+        print("\n🔍 Running simulation with detailed process logging...")
+        metrics_history = run_simulation(network, num_epochs=100, detailed_logging=True)
+    else:
+        print("\n📊 Running standard simulation...")
+        metrics_history = run_simulation(network, num_epochs=500, detailed_logging=False)
     
     # Print summary
     print_network_summary(network)
+    
+    # Show additional analysis for detailed runs
+    if detailed_logging:
+        print("\n🔍 DETAILED ANALYSIS")
+        print("="*50)
+        network.print_decision_analysis(50)
+        network.print_resource_utilization_summary(25)
     
     # Plot results
     try:

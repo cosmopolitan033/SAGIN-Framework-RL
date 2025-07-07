@@ -26,7 +26,7 @@ pip install -r requirements.txt
 ### 3. Verify Installation
 
 ```bash
-python examples/test_basic.py
+python examples/sagin_demo.py
 ```
 
 If you see "🎉 All tests passed successfully!", your installation is working correctly.
@@ -137,11 +137,16 @@ You should see output showing the network creation, simulation progress, and fin
 ### 1. Explore Examples
 
 ```bash
-# Run comprehensive examples
-python examples/demo_simple.py           # Simple demonstration
-python examples/detailed_logging_demo.py # With detailed logging
-python examples/basic_simulation.py      # Full simulation with plots
+# Run the unified interactive demo (all functionality in one place)
+python examples/sagin_demo.py
 ```
+
+The `sagin_demo.py` provides all simulation modes:
+- Test mode for quick validation
+- Simple demo for learning
+- Standard, detailed, and full simulations
+- Custom simulation with your own settings
+- Legacy mode for backwards compatibility
 
 ### 2. Customize Your Simulation
 

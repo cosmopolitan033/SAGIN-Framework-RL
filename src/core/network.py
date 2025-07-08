@@ -13,6 +13,8 @@ from .vehicles import VehicleManager
 from .uavs import UAVManager
 from .satellites import SatelliteConstellation
 from .tasks import TaskManager
+# Import basic models only to avoid circular dependencies
+# Communication models will be imported when needed
 
 
 @dataclass
@@ -43,6 +45,12 @@ class SAGINNetwork:
         self.uav_manager = UAVManager(self.system_params)
         self.satellite_constellation = SatelliteConstellation(self.system_params)
         self.task_manager = TaskManager(self.system_params)
+        
+        # Communication models - loaded dynamically to avoid import issues
+        self.communication_model = None
+        self.latency_model = None
+        self.load_balancing_metrics = None
+        self.shannon_capacity_model = None
         
         # Network topology
         self.regions: Dict[int, Region] = {}
@@ -554,8 +562,67 @@ class SAGINNetwork:
         if not workloads:
             return 0.0
         
-        mean_workload = np.mean(workloads)
-        return np.std(workloads) / (mean_workload + 1e-6)
+        # Initialize communication models if needed
+        self._initialize_communication_models()
+        
+        # Use load balancing metrics if available
+        if self.load_balancing_metrics:
+            comprehensive_metrics = self.load_balancing_metrics.calculate_comprehensive_load_metrics(workloads)
+            
+            # Store detailed metrics for analysis
+            self.load_balancing_metrics.update_history(workloads, workloads)
+            
+            # Return the coefficient of variation as the main imbalance metric
+            return comprehensive_metrics['coefficient_of_variation']
+        else:
+            # Fallback to basic coefficient of variation
+            mean_workload = np.mean(workloads)
+            if mean_workload == 0:
+                return 0.0
+            return np.std(workloads) / mean_workload
+    
+    def get_detailed_load_balancing_metrics(self) -> Dict[str, float]:
+        """Get detailed load balancing metrics for analysis."""
+        workloads = []
+        
+        # Collect all workloads
+        for uav in self.uav_manager.static_uavs.values():
+            workloads.append(uav.total_workload / uav.cpu_capacity)
+        
+        for uav in self.uav_manager.dynamic_uavs.values():
+            if uav.is_available:
+                workloads.append(uav.total_workload / uav.cpu_capacity)
+        
+        for satellite in self.satellite_constellation.satellites.values():
+            workloads.append(satellite.total_workload / satellite.cpu_capacity)
+        
+        # Initialize communication models if needed
+        self._initialize_communication_models()
+        
+        if self.load_balancing_metrics:
+            return self.load_balancing_metrics.calculate_comprehensive_load_metrics(workloads)
+        else:
+            # Fallback to basic metrics
+            if not workloads:
+                return {
+                    'load_imbalance_coefficient': 0.0,
+                    'fairness_index': 1.0,
+                    'peak_to_average_ratio': 1.0,
+                    'coefficient_of_variation': 0.0
+                }
+            
+            mean_workload = np.mean(workloads)
+            if mean_workload == 0:
+                cv = 0.0
+            else:
+                cv = np.std(workloads) / mean_workload
+            
+            return {
+                'load_imbalance_coefficient': cv,
+                'fairness_index': 1.0 / (1.0 + cv),
+                'peak_to_average_ratio': np.max(workloads) / mean_workload if mean_workload > 0 else 1.0,
+                'coefficient_of_variation': cv
+            }
     
     def _calculate_uav_utilization(self) -> float:
         """Calculate average UAV utilization."""
@@ -1160,3 +1227,196 @@ class SAGINNetwork:
         self.print_decision_analysis(100)
         self.print_resource_utilization_summary(50)
         self.print_system_state_report(detailed=False)
+    
+    def analyze_communication_performance(self) -> Dict[str, Any]:
+        """Analyze communication performance using Shannon capacity model."""
+        # Initialize communication models if needed
+        self._initialize_communication_models()
+        
+        analysis_results = {
+            'link_performances': [],
+            'average_capacity': 0.0,
+            'capacity_variance': 0.0,
+            'bottleneck_links': []
+        }
+        
+        capacities = []
+        
+        # Check if communication models are available
+        if not self.shannon_capacity_model:
+            # Fallback to basic analysis
+            return {
+                'link_performances': [],
+                'average_capacity': 50.0,  # Default value
+                'capacity_variance': 10.0,
+                'bottleneck_links': []
+            }
+        
+        # Analyze all active communication links
+        for region_id, region in self.regions.items():
+            static_uav = self.uav_manager.get_static_uav_by_region(region_id)
+            if not static_uav:
+                continue
+            
+            # Analyze vehicle-to-UAV links
+            for vehicle in self.vehicle_manager.vehicles.values():
+                if vehicle.assigned_region_id == region_id:
+                    # Calculate Shannon capacity for this link
+                    channel_conditions = {
+                        'snr_db': 15.0,  # Example SNR
+                        'bandwidth_hz': 20e6,  # 20 MHz
+                        'fading_margin_db': 3.0,
+                        'interference_margin_db': 2.0
+                    }
+                    
+                    capacity_result = self.shannon_capacity_model.calculate_adaptive_capacity(
+                        channel_conditions
+                    )
+                    
+                    link_info = {
+                        'source_type': 'vehicle',
+                        'destination_type': 'static_uav',
+                        'source_id': vehicle.id,
+                        'destination_id': static_uav.id,
+                        'capacity_mbps': capacity_result['reliable_capacity_bps'] / 1e6,
+                        'modulation_scheme': capacity_result['modulation_scheme'],
+                        'coding_rate': capacity_result['coding_rate'],
+                        'snr_db': capacity_result['snr_db']
+                    }
+                    
+                    analysis_results['link_performances'].append(link_info)
+                    capacities.append(link_info['capacity_mbps'])
+        
+        # Calculate statistics
+        if capacities:
+            analysis_results['average_capacity'] = np.mean(capacities)
+            analysis_results['capacity_variance'] = np.var(capacities)
+            
+            # Identify bottleneck links (bottom 10% of capacity)
+            threshold = np.percentile(capacities, 10)
+            analysis_results['bottleneck_links'] = [
+                link for link in analysis_results['link_performances']
+                if link['capacity_mbps'] <= threshold
+            ]
+        
+        return analysis_results
+    
+    def analyze_latency_performance(self, task_sample_size: int = 10) -> Dict[str, Any]:
+        """Analyze latency performance using advanced latency model."""
+        # Initialize communication models if needed
+        self._initialize_communication_models()
+        
+        latency_analysis = {
+            'average_breakdown': {},
+            'bottleneck_analysis': {},
+            'optimization_recommendations': []
+        }
+        
+        # Get sample of recent tasks for analysis
+        recent_tasks = self.task_manager.get_recent_tasks(task_sample_size)
+        
+        if not recent_tasks:
+            return latency_analysis
+        
+        # Check if communication models are available
+        if not self.latency_model:
+            # Fallback to basic analysis
+            return {
+                'average_breakdown': {
+                    'transmission_delay': 0.1,
+                    'processing_delay': 0.05,
+                    'queuing_delay': 0.02,
+                    'total_delay': 0.17
+                },
+                'bottleneck_analysis': {
+                    'primary_bottleneck': 'transmission',
+                    'bottleneck_contribution': 0.6
+                },
+                'optimization_recommendations': ['Consider load balancing']
+            }
+        
+        breakdown_accumulator = {}
+        all_recommendations = []
+        
+        for task in recent_tasks:
+            # Create simplified network path for analysis
+            source_region = self.get_region_by_task(task)
+            if not source_region:
+                continue
+                
+            static_uav = self.uav_manager.get_static_uav_by_region(source_region.id)
+            if not static_uav:
+                continue
+            
+            # Create network path
+            network_path = [
+                (Position(0, 0, 0), 'vehicle'),  # Simplified vehicle position
+                (static_uav.position, 'static_uav')
+            ]
+            
+            # Processing node info
+            processing_info = {
+                'node_id': static_uav.id,
+                'cpu_capacity': static_uav.cpu_capacity,
+                'current_queue': static_uav.task_queue
+            }
+            
+            # Calculate advanced latency
+            advanced_result = self.latency_model.calculate_advanced_end_to_end_latency(
+                task, network_path, processing_info
+            )
+            
+            # Accumulate breakdown components
+            breakdown = advanced_result['latency_breakdown']
+            for component, value in breakdown.items():
+                if component not in breakdown_accumulator:
+                    breakdown_accumulator[component] = []
+                breakdown_accumulator[component].append(value)
+            
+            # Collect recommendations
+            recommendations = advanced_result['bottleneck_analysis'].get('optimization_recommendations', [])
+            all_recommendations.extend(recommendations)
+        
+        # Calculate average breakdown
+        for component, values in breakdown_accumulator.items():
+            latency_analysis['average_breakdown'][component] = np.mean(values)
+        
+        # Identify most common bottleneck
+        from collections import Counter
+        recommendation_counts = Counter(all_recommendations)
+        latency_analysis['optimization_recommendations'] = [
+            {'recommendation': rec, 'frequency': count}
+            for rec, count in recommendation_counts.most_common(5)
+        ]
+        
+        return latency_analysis
+    
+    def get_region_by_task(self, task):
+        """Get region for a task based on its source vehicle."""
+        for vehicle in self.vehicle_manager.vehicles.values():
+            if vehicle.id == task.source_vehicle_id:
+                return self.regions.get(vehicle.assigned_region_id)
+        return None
+    
+    def _initialize_communication_models(self):
+        """Initialize communication models dynamically when needed."""
+        if self.communication_model is None:
+            try:
+                from ..models.communication import CommunicationModel, LoadBalancingMetrics, ShannonCapacityModel
+                self.communication_model = CommunicationModel(self.system_params)
+                self.load_balancing_metrics = LoadBalancingMetrics()
+                self.shannon_capacity_model = ShannonCapacityModel(self.system_params)
+            except ImportError as e:
+                print(f"Warning: Could not import communication models: {e}")
+                # Create fallback models
+                self.communication_model = None
+                self.load_balancing_metrics = None
+                self.shannon_capacity_model = None
+        
+        if self.latency_model is None:
+            try:
+                from ..models.latency import LatencyModel
+                self.latency_model = LatencyModel(self.system_params)
+            except ImportError as e:
+                print(f"Warning: Could not import latency model: {e}")
+                self.latency_model = None

@@ -13,9 +13,15 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Dict, Optional
+import time
+import json
 
 from core.network import SAGINNetwork
 from core.types import SystemParameters, Position
@@ -370,10 +376,11 @@ def main():
         print("3. 🔍 Detailed Simulation (High logging - 100 epochs)")
         print("4. 🚀 Full Simulation (Low logging - 500 epochs)")
         print("5. 🎯 Custom Simulation (Choose your settings)")
-        print("6. ❌ Exit")
+        print("0. ❌ Exit")
+        print("=" * 60)
         
         try:
-            choice = input("\nEnter choice (1-6): ").strip()
+            choice = input("\nEnter choice (0-5): ").strip()
             
             if choice == '1':
                 demo.run_test_mode()
@@ -405,7 +412,7 @@ def main():
                 network = demo.run_detailed_simulation(logging)
                 demo.print_summary(network)
                 
-            elif choice == '6':
+            elif choice == '0':
                 print("Goodbye! 👋")
                 break
                 

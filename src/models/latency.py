@@ -407,3 +407,298 @@ class LatencyModel:
                 ]
         
         return best_path or [(source_pos, NodeType.VEHICLE), (dest_pos, dest_type)]
+
+
+class DetailedLatencyBreakdown:
+    """Detailed latency breakdown for comprehensive analysis."""
+    
+    def __init__(self):
+        self.breakdown_history = []
+    
+    def calculate_detailed_latency(self, task: Task, network_path: List[Tuple[Position, NodeType]],
+                                 processing_node_info: Dict[str, Any]) -> Dict[str, float]:
+        """Calculate detailed latency breakdown with all components."""
+        breakdown = {
+            # Communication delays
+            'uplink_propagation': 0.0,
+            'uplink_transmission': 0.0,
+            'downlink_propagation': 0.0,
+            'downlink_transmission': 0.0,
+            
+            # Processing delays
+            'queue_waiting': 0.0,
+            'context_switch': 0.0,
+            'computation': 0.0,
+            'memory_access': 0.0,
+            
+            # System delays
+            'protocol_overhead': 0.0,
+            'error_handling': 0.0,
+            'synchronization': 0.0,
+            
+            # Total components
+            'total_communication': 0.0,
+            'total_processing': 0.0,
+            'total_system': 0.0,
+            'total_latency': 0.0
+        }
+        
+        # Calculate communication delays
+        if len(network_path) >= 2:
+            # Uplink: source to processing node
+            source_pos, source_type = network_path[0]
+            process_pos, process_type = network_path[-1]
+            
+            # Propagation delay
+            distance = source_pos.distance_to(process_pos)
+            breakdown['uplink_propagation'] = distance / 3e8  # Speed of light
+            
+            # Transmission delay (simplified)
+            data_rate_mbps = 10.0  # Assume 10 Mbps for calculation
+            breakdown['uplink_transmission'] = (task.data_size_in * 8) / data_rate_mbps
+            
+            # Downlink delays (for result transmission)
+            breakdown['downlink_propagation'] = breakdown['uplink_propagation']
+            breakdown['downlink_transmission'] = (task.data_size_out * 8) / data_rate_mbps
+        
+        # Calculate processing delays
+        cpu_capacity = processing_node_info.get('cpu_capacity', 1e9)
+        current_queue = processing_node_info.get('current_queue', [])
+        
+        # Queue waiting time
+        total_queue_cycles = sum(t.cpu_cycles for t in current_queue)
+        breakdown['queue_waiting'] = total_queue_cycles / cpu_capacity
+        
+        # Context switch overhead
+        breakdown['context_switch'] = 0.0001  # 0.1ms
+        
+        # Computation time
+        breakdown['computation'] = task.cpu_cycles / cpu_capacity
+        
+        # Memory access overhead (5% of computation time)
+        breakdown['memory_access'] = breakdown['computation'] * 0.05
+        
+        # System delays
+        breakdown['protocol_overhead'] = 0.001  # 1ms
+        breakdown['error_handling'] = 0.0005   # 0.5ms
+        breakdown['synchronization'] = 0.0002  # 0.2ms
+        
+        # Calculate totals
+        breakdown['total_communication'] = (breakdown['uplink_propagation'] + 
+                                          breakdown['uplink_transmission'] + 
+                                          breakdown['downlink_propagation'] + 
+                                          breakdown['downlink_transmission'])
+        
+        breakdown['total_processing'] = (breakdown['queue_waiting'] + 
+                                       breakdown['context_switch'] + 
+                                       breakdown['computation'] + 
+                                       breakdown['memory_access'])
+        
+        breakdown['total_system'] = (breakdown['protocol_overhead'] + 
+                                   breakdown['error_handling'] + 
+                                   breakdown['synchronization'])
+        
+        breakdown['total_latency'] = (breakdown['total_communication'] + 
+                                    breakdown['total_processing'] + 
+                                    breakdown['total_system'])
+        
+        return breakdown
+    
+    def analyze_latency_bottlenecks(self, breakdown: Dict[str, float]) -> Dict[str, Any]:
+        """Analyze latency breakdown to identify bottlenecks."""
+        total = breakdown['total_latency']
+        if total <= 0:
+            return {}
+        
+        # Calculate percentages
+        percentages = {
+            'communication_percentage': (breakdown['total_communication'] / total) * 100,
+            'processing_percentage': (breakdown['total_processing'] / total) * 100,
+            'system_percentage': (breakdown['total_system'] / total) * 100
+        }
+        
+        # Identify primary bottleneck
+        bottleneck = max(percentages.items(), key=lambda x: x[1])
+        
+        # Detailed component analysis
+        detailed_breakdown = {}
+        for key, value in breakdown.items():
+            if key.startswith('total_'):
+                continue
+            detailed_breakdown[key] = {
+                'value_seconds': value,
+                'percentage': (value / total) * 100 if total > 0 else 0
+            }
+        
+        return {
+            'bottleneck_type': bottleneck[0].replace('_percentage', ''),
+            'bottleneck_percentage': bottleneck[1],
+            'component_percentages': percentages,
+            'detailed_breakdown': detailed_breakdown,
+            'optimization_recommendations': self._get_optimization_recommendations(breakdown)
+        }
+    
+    def _get_optimization_recommendations(self, breakdown: Dict[str, float]) -> List[str]:
+        """Get optimization recommendations based on latency breakdown."""
+        recommendations = []
+        total = breakdown['total_latency']
+        
+        if total <= 0:
+            return recommendations
+        
+        # Communication optimization
+        comm_percentage = (breakdown['total_communication'] / total) * 100
+        if comm_percentage > 50:
+            recommendations.append("Consider edge computing to reduce communication latency")
+            if breakdown['uplink_propagation'] > breakdown['uplink_transmission']:
+                recommendations.append("Propagation delay dominates - consider closer processing nodes")
+            else:
+                recommendations.append("Transmission delay dominates - consider higher bandwidth links")
+        
+        # Processing optimization
+        proc_percentage = (breakdown['total_processing'] / total) * 100
+        if proc_percentage > 50:
+            if breakdown['queue_waiting'] > breakdown['computation']:
+                recommendations.append("Queue waiting dominates - consider load balancing")
+            else:
+                recommendations.append("Computation time dominates - consider more powerful processing nodes")
+        
+        # System optimization
+        sys_percentage = (breakdown['total_system'] / total) * 100
+        if sys_percentage > 20:
+            recommendations.append("System overhead is high - optimize protocol stack")
+        
+        return recommendations
+
+
+class AdvancedLatencyModel(LatencyModel):
+    """Advanced latency model with detailed breakdown capabilities."""
+    
+    def __init__(self, system_params: SystemParameters):
+        super().__init__(system_params)
+        self.detailed_breakdown = DetailedLatencyBreakdown()
+        
+        # Advanced queuing model parameters
+        self.service_disciplines = {
+            'FIFO': self._fifo_queue_delay,
+            'SJF': self._sjf_queue_delay,
+            'EDF': self._edf_queue_delay,
+            'Priority': self._priority_queue_delay
+        }
+        
+        # Cache for performance
+        self.latency_cache = {}
+        self.cache_size = 1000
+    
+    def calculate_advanced_end_to_end_latency(self, task: Task, 
+                                            network_path: List[Tuple[Position, NodeType]],
+                                            processing_node_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate advanced end-to-end latency with detailed breakdown."""
+        # Check cache first
+        cache_key = (task.id, len(network_path), processing_node_info.get('node_id'))
+        if cache_key in self.latency_cache:
+            return self.latency_cache[cache_key]
+        
+        # Calculate detailed breakdown
+        breakdown = self.detailed_breakdown.calculate_detailed_latency(
+            task, network_path, processing_node_info
+        )
+        
+        # Analyze bottlenecks
+        analysis = self.detailed_breakdown.analyze_latency_bottlenecks(breakdown)
+        
+        # Create comprehensive result
+        result = {
+            'latency_breakdown': breakdown,
+            'bottleneck_analysis': analysis,
+            'total_latency': breakdown['total_latency'],
+            'meets_deadline': breakdown['total_latency'] <= (task.deadline - task.creation_time),
+            'slack_time': (task.deadline - task.creation_time) - breakdown['total_latency']
+        }
+        
+        # Cache result
+        if len(self.latency_cache) < self.cache_size:
+            self.latency_cache[cache_key] = result
+        
+        return result
+    
+    def _fifo_queue_delay(self, task: Task, queue: List[Task], cpu_capacity: float) -> float:
+        """Calculate FIFO queue delay."""
+        delay = 0.0
+        for queued_task in queue:
+            if queued_task.creation_time < task.creation_time:
+                delay += queued_task.cpu_cycles / cpu_capacity
+        return delay
+    
+    def _sjf_queue_delay(self, task: Task, queue: List[Task], cpu_capacity: float) -> float:
+        """Calculate Shortest Job First queue delay."""
+        # Tasks with shorter processing time go first
+        shorter_tasks = [t for t in queue if t.cpu_cycles < task.cpu_cycles]
+        return sum(t.cpu_cycles for t in shorter_tasks) / cpu_capacity
+    
+    def _edf_queue_delay(self, task: Task, queue: List[Task], cpu_capacity: float) -> float:
+        """Calculate Earliest Deadline First queue delay."""
+        # Tasks with earlier deadlines go first
+        earlier_deadline_tasks = [t for t in queue if t.deadline < task.deadline]
+        return sum(t.cpu_cycles for t in earlier_deadline_tasks) / cpu_capacity
+    
+    def _priority_queue_delay(self, task: Task, queue: List[Task], cpu_capacity: float) -> float:
+        """Calculate priority-based queue delay."""
+        # Assume priority is inversely related to data size (smaller tasks have higher priority)
+        higher_priority_tasks = [t for t in queue if t.data_size_in < task.data_size_in]
+        return sum(t.cpu_cycles for t in higher_priority_tasks) / cpu_capacity
+    
+    def calculate_total_latency_paper_formula(self, task: Task, communication_path: List[Tuple[Position, NodeType]],
+                                            processing_node_info: Dict[str, Any]) -> LatencyComponents:
+        """Calculate total latency using exact paper formula: T_total = T_prop + T_trans + T_queue + T_comp"""
+        
+        # Initialize components
+        total_prop_delay = 0.0
+        total_trans_delay = 0.0
+        total_queue_delay = 0.0
+        total_comp_delay = 0.0
+        
+        # 1. Propagation delay: T_prop = Σ d_ik / v_prop (for each hop in path)
+        v_prop = self.system_params.propagation_speed  # speed of light
+        for i in range(len(communication_path) - 1):
+            source_pos, _ = communication_path[i]
+            dest_pos, _ = communication_path[i + 1]
+            distance = source_pos.distance_to(dest_pos)
+            total_prop_delay += distance / v_prop
+        
+        # 2. Transmission delay: T_trans = Σ D_in / R_ik (for each hop)
+        for i in range(len(communication_path) - 1):
+            source_pos, source_type = communication_path[i]
+            dest_pos, dest_type = communication_path[i + 1]
+            
+            # Use input data size for uplink, output for downlink
+            data_size = task.data_size_in if i == 0 else task.data_size_out
+            
+            # Calculate transmission rate R_ik using Shannon formula
+            data_rate = self.comm_model.calculate_data_rate(source_pos, dest_pos, source_type, dest_type)
+            
+            if data_rate > 0:
+                data_size_mbits = data_size * 8  # Convert MB to Mbits
+                total_trans_delay += data_size_mbits / data_rate
+            else:
+                return LatencyComponents(total_delay=float('inf'))
+        
+        # 3. Queuing delay: T_queue (time waiting in processing queue)
+        processing_node_id = processing_node_info.get('node_id')
+        current_queue = processing_node_info.get('current_queue', [])
+        cpu_capacity = processing_node_info.get('cpu_capacity', 1e9)
+        
+        total_queue_delay = self.calculate_queuing_delay(task, processing_node_id, current_queue, cpu_capacity)
+        
+        # 4. Computing delay: T_comp = C_j / Θ_node (CPU cycles / processing capacity)
+        total_comp_delay = task.cpu_cycles / cpu_capacity
+        
+        # Return components following paper formula
+        components = LatencyComponents(
+            propagation_delay=total_prop_delay,
+            transmission_delay=total_trans_delay,
+            queuing_delay=total_queue_delay,
+            processing_delay=total_comp_delay
+        )
+        
+        return components

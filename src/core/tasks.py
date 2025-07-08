@@ -471,3 +471,14 @@ class TaskManager:
                        duration: float, amplitude: float):
         """Add a burst event for increased task generation."""
         self.task_generator.add_burst_event(region_id, start_time, duration, amplitude)
+    
+    def get_recent_tasks(self, max_tasks: int = 10) -> List[Task]:
+        """Get recent completed tasks for analysis."""
+        # Get most recent completed tasks
+        recent_completed = list(self.completed_tasks.values())
+        
+        # Sort by completion time (most recent first)
+        recent_completed.sort(key=lambda t: t.completion_time if t.completion_time > 0 else 0, reverse=True)
+        
+        # Return up to max_tasks recent tasks
+        return recent_completed[:max_tasks]

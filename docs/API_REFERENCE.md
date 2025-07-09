@@ -1,53 +1,425 @@
 # SAGIN API Reference
 
-## Core Classes
+This document provides comprehensive API documentation for the SAGIN simulation framework.
+
+## 🏗️ Core Components
 
 ### SAGINNetwork
+Main orchestrator for the entire SAGIN network simulation.
 
-Main orchestrator class for the SAGIN simulation system.
-
-#### Constructor
 ```python
-SAGINNetwork(system_params: Optional[SystemParameters] = None)
+from src.core.network import SAGINNetwork
+
+network = SAGINNetwork(system_params)
 ```
 
 #### Key Methods
+- `setup_network_topology_with_grid(grid_config)` - Setup grid-based topology
+- `add_vehicles(count, area_bounds, vehicle_type)` - Add vehicles to network
+- `add_dynamic_uavs(count, area_bounds)` - Add dynamic UAVs
+- `add_satellite_constellation(num_satellites, num_planes)` - Add satellites
+- `initialize_simulation()` - Initialize simulation state
+- `step(dt, verbose)` - Execute one simulation step
+- `run_simulation(num_epochs, callback)` - Run complete simulation
+- `get_performance_summary()` - Get performance metrics
+- `get_network_state()` - Get current network state
 
-##### Network Setup
+### Configuration System
+
+#### SAGINConfig
+Complete configuration for SAGIN simulation.
+
 ```python
-def setup_network_topology(self, area_bounds: Tuple[float, float, float, float], 
-                          num_regions: int = 5) -> None
-    """Setup network topology with regions."""
+from config.grid_config import SAGINConfig, get_sagin_config
 
-def create_region(self, name: str, center: Position, radius: float,
-                 base_intensity: float = 1.0) -> int
-    """Create a new region in the network."""
+config = get_sagin_config("medium_demo")
+system_params = config.get_system_parameters()
 ```
 
-##### Network Elements
+#### GridConfig
+Grid topology configuration.
+
 ```python
-def add_vehicles(self, count: int, area_bounds: Tuple[float, float, float, float],
-                vehicle_type: str = "random") -> List[int]
-    """Add vehicles to the network. vehicle_type: 'random' or 'bus'"""
+from config.grid_config import GridConfig
 
-def add_dynamic_uavs(self, count: int, area_bounds: Tuple[float, float, float, float]) -> List[int]
-    """Add dynamic UAVs to the network."""
-
-def add_satellite_constellation(self, num_satellites: int = 12, 
-                              num_planes: int = 3) -> List[int]
-    """Add satellite constellation to the network."""
+grid = GridConfig(
+    grid_rows=5,
+    grid_cols=10,
+    area_bounds=(0.0, 10000.0, 0.0, 5000.0)
+)
 ```
 
-##### Simulation Control
+**Properties:**
+- `total_regions` - Total number of regions
+- `region_width` - Width of each region
+- `region_height` - Height of each region
+
+**Methods:**
+- `get_region_center(row, col)` - Get region center coordinates
+- `get_region_id(row, col)` - Get region ID from grid position
+- `get_grid_position(region_id)` - Get grid position from region ID
+
+#### VehicleConfig
+Vehicle configuration parameters.
+
 ```python
-def initialize_simulation(self) -> None
-    """Initialize the simulation."""
+from config.grid_config import VehicleConfig
 
-def step(self, dt: Optional[float] = None, verbose: bool = True) -> Dict[str, Any]
-    """Execute one simulation step."""
+vehicles = VehicleConfig(
+    random_vehicles=50,
+    bus_vehicles=15,
+    vehicle_speed_range=(5.0, 20.0)
+)
+```
 
-def run_simulation(self, num_epochs: int, progress_callback: Optional[callable] = None) -> None
-    """Run the simulation for a specified number of epochs."""
+#### UAVConfig
+UAV configuration parameters.
+
+```python
+from config.grid_config import UAVConfig
+
+uavs = UAVConfig(
+    dynamic_uavs=10,
+    uav_max_speed=20.0,
+    uav_altitude=100.0,
+    uav_cpu_capacity=1e9
+)
+```
+
+#### SatelliteConfig
+Satellite constellation configuration.
+
+```python
+from config.grid_config import SatelliteConfig
+
+satellites = SatelliteConfig(
+    num_satellites=12,
+    num_planes=3,
+    altitude=600000.0
+)
+```
+
+#### SimulationConfig
+Simulation parameters and settings.
+
+```python
+from config.grid_config import SimulationConfig
+
+simulation = SimulationConfig(
+    total_epochs=100,
+    logging_level="medium",
+    log_decisions=True,
+    export_results=True
+)
+```
+
+## 🎮 Demo Interface
+
+### SAGINDemo
+High-level interface for running simulations.
+
+```python
+from examples.sagin_demo import SAGINDemo
+
+demo = SAGINDemo()
+```
+
+#### Methods
+- `create_network(config_name)` - Create network from configuration
+- `run_simulation(config_name)` - Run complete simulation
+- `print_summary(network)` - Print simulation results
+- `plot_results(network)` - Plot performance graphs
+- `export_results(network)` - Export results to file
+
+## 🚗 Vehicle Management
+
+### VehicleManager
+Manages all vehicles in the network.
+
+```python
+from src.core.vehicles import VehicleManager
+
+vm = VehicleManager(system_params)
+```
+
+#### Methods
+- `create_random_waypoint_vehicles(count, area_bounds)` - Create random vehicles
+- `create_bus_route_vehicles(count, route_points)` - Create bus route vehicles
+- `update_all_vehicles(current_time, dt)` - Update vehicle positions
+- `assign_vehicles_to_regions(regions)` - Assign vehicles to regions
+- `get_vehicles_in_region(region_id)` - Get vehicles in specific region
+
+## 🚁 UAV Management
+
+### UAVManager
+Manages static and dynamic UAVs.
+
+```python
+from src.core.uavs import UAVManager
+
+uav_mgr = UAVManager(system_params)
+```
+
+#### Methods
+- `create_static_uav(region_id, position, cpu_capacity)` - Create static UAV
+- `create_dynamic_uav(initial_position, cpu_capacity)` - Create dynamic UAV
+- `get_static_uav_by_region(region_id)` - Get static UAV for region
+- `get_available_dynamic_uavs_in_region(region_id)` - Get available dynamic UAVs
+- `assign_dynamic_uav(uav_id, region_id, region_center, current_time)` - Assign dynamic UAV
+- `update_all_uavs(current_time, dt)` - Update all UAVs
+
+### UAV Classes
+
+#### StaticUAV
+Static UAV providing continuous coverage.
+
+```python
+from src.core.uavs import StaticUAV
+
+static_uav = StaticUAV(uav_id, region_id, position, cpu_capacity)
+```
+
+**Methods:**
+- `add_task(task)` - Add task to UAV queue
+- `process_tasks(current_time, dt)` - Process queued tasks
+- `make_offloading_decision(task, available_dynamic_uavs, satellite_available, current_time)` - Make offloading decision
+
+#### DynamicUAV
+Dynamic UAV that can be reassigned.
+
+```python
+from src.core.uavs import DynamicUAV
+
+dynamic_uav = DynamicUAV(uav_id, initial_position, cpu_capacity)
+```
+
+**Methods:**
+- `assign_to_region(region_id, region_center, current_time)` - Assign to new region
+- `update_flight(current_time, dt)` - Update flight progress
+
+## 🛰️ Satellite Management
+
+### SatelliteConstellation
+Manages satellite constellation.
+
+```python
+from src.core.satellites import SatelliteConstellation
+
+sat_constellation = SatelliteConstellation(system_params)
+```
+
+#### Methods
+- `create_constellation(num_satellites, num_planes)` - Create satellite constellation
+- `update_all_satellites(current_time, dt)` - Update satellite positions
+- `find_visible_satellites(ground_position)` - Find visible satellites
+- `assign_task_to_satellite(task, ground_position)` - Assign task to satellite
+
+## 📝 Task Management
+
+### TaskManager
+Central task management system.
+
+```python
+from src.core.tasks import TaskManager
+
+task_mgr = TaskManager(system_params)
+```
+
+#### Methods
+- `initialize_region_queues(region_ids, queue_size)` - Initialize task queues
+- `generate_tasks(regions, vehicles_by_region, current_time, dt)` - Generate new tasks
+- `get_tasks_for_region(region_id, max_tasks)` - Get pending tasks for region
+- `mark_task_completed(task)` - Mark task as completed
+- `mark_task_failed(task, reason)` - Mark task as failed
+- `cleanup_expired_tasks(current_time)` - Remove expired tasks
+
+### Task
+Individual computational task.
+
+```python
+from src.core.types import Task
+
+task = Task(
+    id=1,
+    source_vehicle_id=1,
+    region_id=1,
+    data_size_in=1.0,
+    data_size_out=0.5,
+    cpu_cycles=1e9,
+    deadline=current_time + 10.0,
+    creation_time=current_time
+)
+```
+
+## 📡 Communication Models
+
+### CommunicationModel
+Advanced communication modeling.
+
+```python
+from src.models.communication import CommunicationModel
+
+comm_model = CommunicationModel(system_params)
+```
+
+#### Methods
+- `calculate_data_rate(tx_pos, rx_pos, tx_type, rx_type)` - Calculate data rate
+- `calculate_transmission_delay(data_size, tx_pos, rx_pos, tx_type, rx_type)` - Calculate transmission delay
+- `is_link_available(tx_pos, rx_pos, tx_type, rx_type)` - Check link availability
+
+### ShannonCapacityModel
+Shannon capacity calculations.
+
+```python
+from src.models.communication import ShannonCapacityModel
+
+shannon = ShannonCapacityModel(system_params)
+```
+
+#### Methods
+- `calculate_shannon_capacity(bandwidth_hz, transmit_power, channel_gain, noise_power)` - Basic Shannon capacity
+- `calculate_practical_capacity(bandwidth_mhz, snr_db)` - Practical capacity with coding
+- `calculate_adaptive_capacity(channel_conditions)` - Adaptive capacity based on conditions
+
+## ⏱️ Latency Models
+
+### LatencyModel
+Comprehensive latency modeling.
+
+```python
+from src.models.latency import LatencyModel
+
+latency_model = LatencyModel(system_params)
+```
+
+#### Methods
+- `calculate_propagation_delay(source_pos, dest_pos)` - Calculate propagation delay
+- `calculate_transmission_delay(data_size, source_pos, dest_pos, source_type, dest_type)` - Calculate transmission delay
+- `calculate_end_to_end_latency(task, communication_path, processing_node_info)` - Calculate total latency
+
+## 🤖 Reinforcement Learning
+
+### SAGINRLEnvironment
+RL environment for SAGIN optimization.
+
+```python
+from src.rl.environment import SAGINRLEnvironment
+
+env = SAGINRLEnvironment(network, env_config)
+```
+
+#### Methods
+- `reset()` - Reset environment
+- `step(central_action, local_actions)` - Take action step
+- `get_global_state()` - Get global state for central agent
+- `get_local_state(region_id)` - Get local state for region
+
+### CentralAgent
+Central agent for dynamic UAV allocation.
+
+```python
+from src.rl.agents import CentralAgent
+
+central_agent = CentralAgent(state_dim, action_dim, agent_config)
+```
+
+#### Methods
+- `select_action(state, epsilon)` - Select action using epsilon-greedy
+- `update(state, action, reward, next_state, done)` - Update agent
+
+### LocalAgent
+Local agent for task offloading decisions.
+
+```python
+from src.rl.agents import LocalAgent
+
+local_agent = LocalAgent(state_dim, action_dim, agent_config)
+```
+
+## 📊 Utility Functions
+
+### Configuration Utilities
+```python
+from config.grid_config import (
+    get_sagin_config,
+    list_available_configs,
+    print_config_summary,
+    create_custom_sagin_config
+)
+
+# Get predefined configuration
+config = get_sagin_config("medium_demo")
+
+# List all available configurations
+configs = list_available_configs()
+
+# Print configuration details
+print_config_summary("highway_scenario")
+
+# Create custom configuration
+custom_config = create_custom_sagin_config(
+    name="test_config",
+    grid_rows=3,
+    grid_cols=4,
+    random_vehicles=25
+)
+```
+
+## 🔢 Data Types
+
+### Core Types
+```python
+from src.core.types import (
+    Position,
+    Velocity,
+    SystemParameters,
+    TaskStatus,
+    TaskDecision,
+    NodeType
+)
+```
+
+### Enums
+- `TaskStatus`: PENDING, IN_PROGRESS, COMPLETED, FAILED, DEADLINE_MISSED
+- `TaskDecision`: LOCAL, DYNAMIC, SATELLITE
+- `NodeType`: VEHICLE, STATIC_UAV, DYNAMIC_UAV, SATELLITE
+
+### SystemParameters
+```python
+system_params = SystemParameters(
+    epoch_duration=1.0,
+    total_epochs=100,
+    min_rate_threshold=1.0,
+    uav_max_speed=20.0,
+    uav_altitude=100.0,
+    max_load_imbalance=0.3,
+    propagation_speed=3e8,
+    min_energy_threshold=1000.0
+)
+```
+
+## ⚡ Performance Tips
+
+1. **Use appropriate configurations** for your use case
+2. **Enable low logging level** for large simulations
+3. **Batch process results** for analysis
+4. **Monitor memory usage** with large networks
+5. **Use progress callbacks** for long simulations
+
+## 🐛 Error Handling
+
+Common exceptions and how to handle them:
+
+```python
+try:
+    network = demo.run_simulation("invalid_config")
+except KeyError:
+    print("Configuration not found")
+
+try:
+    network.step()
+except Exception as e:
+    print(f"Simulation error: {e}")
 ```
 
 ##### State and Metrics

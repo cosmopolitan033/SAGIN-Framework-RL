@@ -1,291 +1,218 @@
-# Getting Started with SAGIN
+# Getting Started with SAGIN Simulation
 
-This tutorial will guide you through setting up and running your first SAGIN simulation.
+This guide will help you quickly get up and running with the SAGIN network simulation.
 
-## Prerequisites
+## 🚀 Installation
 
+### Prerequisites
 - Python 3.8 or higher
-- Git (for cloning the repository)
-- Basic understanding of networks and distributed systems
+- Git
 
-## Installation
-
-### 1. Clone the Repository
-
+### Setup
 ```bash
+# Clone the repository
 git clone <repository-url>
 cd SAGIN
-```
 
-### 2. Install Dependencies
-
-```bash
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Verify Installation
+## 🎮 Running Your First Simulation
 
+### Option 1: Interactive Menu
 ```bash
 python examples/sagin_demo.py
 ```
 
-If you see "🎉 All tests passed successfully!", your installation is working correctly.
-
-## Your First Simulation
-
-### Step 1: Understanding the Architecture
-
-SAGIN consists of three layers:
-
+This will present you with an interactive menu:
 ```
-🛰️  SPACE LAYER    │ LEO Satellites (overflow processing)
-🚁  AIR LAYER      │ UAVs (Static per region + Dynamic repositionable)
-🚗  GROUND LAYER   │ Vehicles (task generation and mobility)
+Select simulation mode:
+1. 📋 List available configurations
+2. ℹ️  Show configuration details  
+3. 🚀 Run simulation with configuration
+4. 🧪 Quick test (small_test config)
+0. ❌ Exit
 ```
 
-### Step 2: Simple Example
+### Option 2: Direct Configuration
+```python
+from examples.sagin_demo import SAGINDemo
 
-Create a file called `my_first_simulation.py`:
+demo = SAGINDemo()
+network = demo.run_simulation("medium_demo")
+demo.print_summary(network)
+```
+
+## 📊 Understanding Configurations
+
+Each configuration defines:
+- **Grid topology**: Number of regions and area coverage
+- **Network elements**: Vehicles, UAVs, satellites
+- **Task parameters**: Generation rates, burst events
+- **Simulation settings**: Duration, logging level
+
+### Available Configurations
+
+| Name | Description | Best For |
+|------|-------------|----------|
+| `small_test` | Quick validation (2×3 grid) | Testing and debugging |
+| `medium_demo` | Standard demonstration (4×4 grid) | Learning the system |
+| `large_simulation` | Comprehensive analysis (5×10 grid) | Performance evaluation |
+| `highway_scenario` | Linear topology (1×20 grid) | Highway/corridor scenarios |
+| `city_scenario` | Dense urban (8×12 grid) | High-density environments |
+| `sparse_rural` | Rural coverage (6×8 grid) | Low-density scenarios |
+
+## 🔧 Customizing Configurations
+
+### Method 1: Modify Existing Configuration
+Edit `config/grid_config.py` and modify the `SAGIN_CONFIGS` dictionary:
 
 ```python
-from src.core.network import SAGINNetwork
-from src.core.types import SystemParameters
-
-# Create system parameters
-params = SystemParameters(
-    epoch_duration=1.0,      # 1 second per simulation step
-    total_epochs=50,         # Run for 50 steps
-    min_rate_threshold=1.0,  # Minimum 1 Mbps data rate
-    uav_altitude=100.0,      # UAVs fly at 100m altitude
-    uav_max_speed=20.0       # Maximum UAV speed 20 m/s
+"my_scenario": SAGINConfig(
+    name="my_scenario",
+    description="My custom scenario",
+    grid=GridConfig(
+        grid_rows=3,
+        grid_cols=4,
+        area_bounds=(0.0, 12000.0, 0.0, 9000.0)
+    ),
+    vehicles=VehicleConfig(
+        random_vehicles=30,
+        bus_vehicles=8
+    ),
+    # ... other parameters
 )
-
-# Initialize the network
-network = SAGINNetwork(params)
-
-# Define a 5km x 5km simulation area
-area_bounds = (0.0, 5000.0, 0.0, 5000.0)
-
-# Setup network topology with 3 regions
-network.setup_network_topology(area_bounds, num_regions=3)
-
-# Add network elements
-vehicles = network.add_vehicles(30, area_bounds, vehicle_type="random")
-buses = network.add_vehicles(10, area_bounds, vehicle_type="bus")
-dynamic_uavs = network.add_dynamic_uavs(5, area_bounds)
-satellites = network.add_satellite_constellation(num_satellites=6, num_planes=2)
-
-print(f"Created network with:")
-print(f"  - 3 regions with static UAVs")
-print(f"  - {len(vehicles)} random vehicles")
-print(f"  - {len(buses)} bus vehicles")
-print(f"  - {len(dynamic_uavs)} dynamic UAVs")
-print(f"  - {len(satellites)} satellites")
-
-# Initialize and run simulation
-network.initialize_simulation()
-
-print("\nRunning simulation...")
-for epoch in range(50):
-    results = network.step()
-    
-    # Print progress every 10 epochs
-    if epoch % 10 == 0:
-        metrics = network.metrics
-        print(f"Epoch {epoch}: "
-              f"Generated: {metrics.total_tasks_generated}, "
-              f"Completed: {metrics.total_tasks_completed}, "
-              f"Success Rate: {metrics.success_rate:.3f}")
-
-# Final results
-print(f"\nFinal Results:")
-print(f"Success Rate: {network.metrics.success_rate:.3f}")
-print(f"Average Latency: {network.metrics.average_latency:.3f}s")
-print(f"UAV Utilization: {network.metrics.uav_utilization:.3f}")
 ```
 
-### Step 3: Run Your Simulation
+### Method 2: Create Custom Configuration Programmatically
+```python
+from config.grid_config import create_custom_sagin_config
 
-```bash
-python my_first_simulation.py
+config = create_custom_sagin_config(
+    name="test_config",
+    grid_rows=2,
+    grid_cols=3,
+    random_vehicles=20,
+    dynamic_uavs=3
+)
 ```
 
-You should see output showing the network creation, simulation progress, and final results.
+## 📈 Understanding Output
 
-## Understanding the Output
+### Console Output
+During simulation, you'll see:
+```
+🚀 SAGIN SIMULATION: MEDIUM_DEMO
+============================================================
+Created medium_demo SAGIN network:
+  - 4x4 grid (16 regions)
+  - Area: 8.0km x 8.0km
+  - 30 random vehicles
+  - 10 bus vehicles
+  - 16 static UAVs (1 per region)
+  - 5 dynamic UAVs
+  - 8 satellites
 
-### Network Creation
-- **Regions**: Geographic areas that group vehicles and have dedicated static UAVs
-- **Vehicles**: Mobile nodes that generate computational tasks
-- **UAVs**: Processing nodes that handle tasks locally or forward to satellites
-- **Satellites**: High-capacity processing nodes for overflow tasks
-
-### Simulation Progress
-- **Generated**: Total tasks created by vehicles
-- **Completed**: Tasks successfully processed
-- **Success Rate**: Percentage of tasks completed before deadline
-- **Latency**: Average time from task generation to completion
+Running 100-epoch simulation with medium logging...
+Epoch   0: Success: 0.000, Latency: 0.000s, Load: 0.000
+Epoch  25: Success: 0.850, Latency: 2.340s, Load: 0.234
+...
+```
 
 ### Key Metrics
-- **Success Rate**: Higher is better (target: >0.8)
-- **Average Latency**: Lower is better (depends on task deadlines)
-- **UAV Utilization**: Efficiency of UAV usage (target: 0.6-0.8)
-- **Load Imbalance**: Distribution of work (lower is better)
+- **Success Rate**: Percentage of tasks completed within deadline
+- **Latency**: Average time from task creation to completion
+- **Load**: Load imbalance across UAVs (lower is better)
 
-## Next Steps
+## 🧪 Testing Different Scenarios
 
-### 1. Explore Examples
-
-```bash
-# Run the unified interactive demo (all functionality in one place)
-python examples/sagin_demo.py
-```
-
-The `sagin_demo.py` provides all simulation modes:
-- Test mode for quick validation
-- Standard, detailed, and full simulations
-- Custom simulation with your own settings
-
-### 2. Customize Your Simulation
-
-#### Add Burst Events
+### 1. Highway Scenario
 ```python
-# Add a traffic burst in region 1
-network.task_manager.add_burst_event(
-    region_id=1,
-    start_time=20.0,    # Start at 20 seconds
-    duration=15.0,      # Last for 15 seconds
-    amplitude=3.0       # 3x normal task generation
-)
+# Good for testing linear topology
+demo.run_simulation("highway_scenario")
 ```
 
-#### Custom System Parameters
+### 2. Dense City
 ```python
-params = SystemParameters(
-    epoch_duration=0.5,        # Faster simulation
-    min_rate_threshold=2.0,    # Higher data rate requirement
-    uav_battery_capacity=150000.0,  # Longer UAV operation
-    max_load_imbalance=0.2,    # Stricter load balancing
-    energy_threshold=0.1       # Earlier energy warnings
-)
+# Test high-load scenarios
+demo.run_simulation("city_scenario") 
 ```
 
-#### Different Vehicle Types
+### 3. Rural Coverage
 ```python
-# Create vehicles with different mobility patterns
-cars = network.add_vehicles(50, area_bounds, vehicle_type="random")
-buses = network.add_vehicles(20, area_bounds, vehicle_type="bus")
+# Test sparse networks
+demo.run_simulation("sparse_rural")
 ```
 
-### 3. Monitor Performance
+## 📊 Visualization and Analysis
 
+After running a simulation:
+
+### View Results
 ```python
-# Get detailed network state
-network_state = network.get_network_state()
-print(f"Current time: {network_state['current_time']}")
-print(f"Active regions: {len(network_state['regions'])}")
-
-# Get performance summary
-performance = network.get_performance_summary()
-print(f"Total epochs: {performance['total_epochs']}")
-print(f"Network elements: {performance['network_elements']}")
+demo.print_summary(network)
 ```
 
-### 4. Export Results
-
+### Plot Performance
 ```python
-# Export simulation results to JSON
-network.export_results("my_simulation_results.json")
+demo.plot_results(network)
 ```
 
-## Common Patterns
-
-### 1. Dense Urban Scenario
+### Export Data
 ```python
-# High density, many vehicles, frequent tasks
-area_bounds = (0.0, 2000.0, 0.0, 2000.0)  # Smaller area
-network.setup_network_topology(area_bounds, num_regions=4)
-network.add_vehicles(100, area_bounds, vehicle_type="random")
-network.add_vehicles(30, area_bounds, vehicle_type="bus")
-network.add_dynamic_uavs(15, area_bounds)
+demo.export_results(network)
 ```
 
-### 2. Sparse Rural Scenario
-```python
-# Low density, fewer vehicles, less frequent tasks
-area_bounds = (0.0, 20000.0, 0.0, 20000.0)  # Larger area
-network.setup_network_topology(area_bounds, num_regions=3)
-network.add_vehicles(20, area_bounds, vehicle_type="random")
-network.add_dynamic_uavs(8, area_bounds)
-```
-
-### 3. Emergency Response Scenario
-```python
-# Add multiple burst events to simulate emergency
-for region_id in [1, 2, 3]:
-    network.task_manager.add_burst_event(
-        region_id=region_id,
-        start_time=50.0 + region_id * 10,
-        duration=30.0,
-        amplitude=4.0
-    )
-```
-
-## Troubleshooting
+## 🔍 Debugging and Troubleshooting
 
 ### Common Issues
 
-1. **Import Error**: Make sure you're running from the project root directory
-2. **No Tasks Generated**: Check if vehicles are added and simulation is initialized
-3. **Low Success Rate**: Increase UAV capacity or add more dynamic UAVs
-4. **High Latency**: Reduce task complexity or increase processing resources
-
-### Debug Mode
-
-```python
-# Enable verbose logging
-for epoch in range(10):
-    results = network.step(verbose=True)  # Detailed output
+**1. Import Errors**
+```bash
+# Make sure you're in the SAGIN directory
+cd SAGIN
+python examples/sagin_demo.py
 ```
 
-### Performance Monitoring
+**2. No Tasks Generated**
+- Check vehicle distribution
+- Verify task generation parameters
+- Increase simulation duration
 
+**3. Low Success Rates**
+- Increase UAV capacity
+- Add more dynamic UAVs  
+- Reduce task generation rate
+
+### Verbose Logging
+For detailed debugging, use high logging level:
 ```python
-# Track metrics over time
-metrics_history = []
-for epoch in range(100):
-    results = network.step()
-    metrics_history.append({
-        'epoch': epoch,
-        'success_rate': network.metrics.success_rate,
-        'latency': network.metrics.average_latency,
-        'utilization': network.metrics.uav_utilization
-    })
+# Edit config in grid_config.py
+simulation=SimulationConfig(
+    logging_level="high",
+    log_decisions=True,
+    log_resource_usage=True
+)
 ```
 
-## Advanced Topics
+## 🎯 Next Steps
 
-After mastering the basics, explore:
+1. **Explore Configurations**: Try different scenarios
+2. **Customize Parameters**: Modify configurations for your needs
+3. **Add RL Training**: Use the hierarchical RL module
+4. **Analyze Performance**: Use visualization tools
+5. **Create New Scenarios**: Design custom configurations
 
-1. **[Implementation Guide](IMPLEMENTATION_GUIDE.md)** - Deep technical details
-2. **[API Reference](API_REFERENCE.md)** - Complete API documentation
-3. **Custom Extensions** - Add your own mobility models, task types, or communication models
-4. **Reinforcement Learning** - Use the system for RL research
+## 📚 Further Reading
 
-## Getting Help
+- [API Reference](API_REFERENCE.md) - Detailed API documentation
+- [Implementation Guide](IMPLEMENTATION_GUIDE.md) - Technical details
+- [Quick Reference](QUICK_REFERENCE.md) - Command reference
 
-- Check the **[Troubleshooting Guide](TROUBLESHOOTING.md)** for common issues
-- Look at the `examples/` directory for more complex scenarios
-- Review the **[Implementation Guide](IMPLEMENTATION_GUIDE.md)** for technical details
+## 🆘 Getting Help
 
-## What's Next?
-
-Now that you have a basic understanding of SAGIN, you can:
-
-1. **Experiment** with different network configurations
-2. **Analyze** performance under various conditions
-3. **Extend** the system with custom components
-4. **Research** task offloading strategies and UAV coordination
-5. **Develop** reinforcement learning algorithms for dynamic optimization
-
-Welcome to the SAGIN ecosystem! 🚀
+If you encounter issues:
+1. Check this guide for common solutions
+2. Review configuration examples in `config/grid_config.py`
+3. Check the console output for error messages

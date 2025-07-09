@@ -1,12 +1,10 @@
 """
-Comprehensive SAGIN Network Simulation Demo
-==========================================
+Comprehensive SAGIN Network Simulation Demo (Version 2)
+======================================================
 
-This single script provides all SAGIN simulation functionality with configurable options:
-- Quick test mode for validation
-- Simple demo for learning
-- Full simulation with detailed logging options
-- Performance analysis and visualization
+This script uses the comprehensive configuration system to run different
+SAGIN scenarios without needing code modifications. All parameters can be
+configured in the config files.
 """
 
 import sys
@@ -20,185 +18,100 @@ import time
 import json
 
 from src.core.network import SAGINNetwork
-from src.core.types import SystemParameters, Position
+from src.core.types import Position
 from config.grid_config import get_sagin_config, list_available_configs, print_config_summary
 
 
 class SAGINDemo:
-    """Comprehensive SAGIN demonstration with multiple modes."""
+    """SAGIN demonstration using comprehensive configuration system."""
     
     def __init__(self):
         self.network = None
         self.metrics_history = []
+        self.current_config = None
     
-    def create_network(self, scale: str = "medium", grid_config_name: str = None) -> SAGINNetwork:
-        """Create a SAGIN network with configurable scale and grid."""
-        if scale == "small":
-            # Small network for testing/quick demos
-            params = SystemParameters(
-                epoch_duration=1.0,
-                total_epochs=50,
-                min_rate_threshold=1.0,
-                uav_max_speed=20.0,
-                uav_altitude=100.0,
-                max_load_imbalance=0.3
-            )
-            grid_config = get_grid_config(grid_config_name or "small_square")
-            random_vehicles = 20
-            bus_vehicles = 5
-            dynamic_uavs = 3
-            satellites = 6
-            planes = 2
-            
-        elif scale == "medium":
-            # Medium network for standard demos
-            params = SystemParameters(
-                epoch_duration=1.0,
-                total_epochs=100,
-                min_rate_threshold=1.0,
-                uav_max_speed=20.0,
-                uav_altitude=100.0,
-                max_load_imbalance=0.3
-            )
-            grid_config = get_grid_config(grid_config_name or "rectangular_5x10")
-            random_vehicles = 50
-            bus_vehicles = 15
-            dynamic_uavs = 7
-            satellites = 9
-            planes = 3
-            
-        else:  # large
-            # Large network for comprehensive simulations
-            params = SystemParameters(
-                epoch_duration=1.0,
-                total_epochs=500,
-                min_rate_threshold=1.0,
-                uav_max_speed=20.0,
-                uav_altitude=100.0,
-                max_load_imbalance=0.3
-            )
-            grid_config = get_grid_config(grid_config_name or "city_8x12")
-            random_vehicles = 80
-            bus_vehicles = 20
-            dynamic_uavs = 10
-            satellites = 12
-            planes = 3
+    def create_network(self, config_name: str = "medium_demo") -> SAGINNetwork:
+        """Create a SAGIN network using a predefined configuration."""
+        # Get the configuration
+        self.current_config = get_sagin_config(config_name)
+        config = self.current_config
+        
+        # Convert to system parameters
+        system_params = config.get_system_parameters()
         
         # Initialize network
-        network = SAGINNetwork(params)
+        network = SAGINNetwork(system_params)
         
         # Setup network topology using grid configuration
-        network.setup_network_topology(grid_config=grid_config)
+        network.setup_network_topology_with_grid(config.grid)
         
-        # Add vehicles
-        random_veh = network.add_vehicles(random_vehicles, grid_config.area_bounds, vehicle_type="random")
-        bus_veh = network.add_vehicles(bus_vehicles, grid_config.area_bounds, vehicle_type="bus")
+        # Add vehicles according to configuration
+        random_veh = network.add_vehicles(
+            config.vehicles.random_vehicles, 
+            config.grid.area_bounds, 
+            vehicle_type="random"
+        )
+        bus_veh = network.add_vehicles(
+            config.vehicles.bus_vehicles, 
+            config.grid.area_bounds, 
+            vehicle_type="bus"
+        )
         
-        # Add dynamic UAVs
-        dynamic_uav_list = network.add_dynamic_uavs(dynamic_uavs, grid_config.area_bounds)
+        # Add dynamic UAVs according to configuration
+        dynamic_uav_list = network.add_dynamic_uavs(
+            config.uavs.dynamic_uavs, 
+            config.grid.area_bounds
+        )
         
-        # Add satellite constellation
-        satellite_list = network.add_satellite_constellation(num_satellites=satellites, num_planes=planes)
+        # Add satellite constellation according to configuration
+        satellite_list = network.add_satellite_constellation(
+            num_satellites=config.satellites.num_satellites, 
+            num_planes=config.satellites.num_planes
+        )
         
-        print(f"Created {scale} SAGIN network with {grid_config_name or 'default'} grid:")
+        # Configure task generation
+        if config.tasks.burst_events:
+            for region_id, start_time, duration, amplitude in config.tasks.burst_events:
+                network.task_manager.add_burst_event(region_id, start_time, duration, amplitude)
+        
+        print(f"Created {config_name} SAGIN network:")
+        print(f"  - {config.grid.grid_rows}x{config.grid.grid_cols} grid ({config.grid.total_regions} regions)")
+        print(f"  - Area: {config.grid.area_bounds[1]/1000:.1f}km x {config.grid.area_bounds[3]/1000:.1f}km")
         print(f"  - {len(random_veh)} random vehicles")
         print(f"  - {len(bus_veh)} bus vehicles")
-        print(f"  - {grid_config.total_regions} static UAVs (1 per region)")
+        print(f"  - {config.grid.total_regions} static UAVs (1 per region)")
         print(f"  - {len(dynamic_uav_list)} dynamic UAVs")
         print(f"  - {len(satellite_list)} satellites")
+        if config.tasks.burst_events:
+            print(f"  - {len(config.tasks.burst_events)} burst events configured")
         
         self.network = network
         return network
     
-    def add_burst_events(self, network: SAGINNetwork, intensity: str = "medium"):
-        """Add burst events with configurable intensity."""
-        if intensity == "light":
-            events = [
-                (1, 20.0, 15.0, 1.5),
-            ]
-        elif intensity == "medium":
-            events = [
-                (1, 30.0, 20.0, 2.0),
-                (2, 60.0, 15.0, 1.8),
-            ]
-        else:  # heavy
-            events = [
-                (1, 100.0, 50.0, 3.0),
-                (2, 200.0, 30.0, 2.5),
-                (3, 350.0, 40.0, 2.0),
-            ]
+    def run_simulation(self, config_name: str = "medium_demo"):
+        """Run simulation using the specified configuration."""
+        print(f"🚀 SAGIN SIMULATION: {config_name.upper()}")
+        print("="*60)
         
-        for region_id, start_time, duration, amplitude in events:
-            network.task_manager.add_burst_event(region_id, start_time, duration, amplitude)
+        # Create network with configuration
+        network = self.create_network(config_name)
+        config = self.current_config
         
-        print(f"Added {len(events)} burst events ({intensity} intensity)")
-    
-    def run_test_mode(self):
-        """Quick test mode - validate basic functionality."""
-        print("🧪 SAGIN SYSTEM TEST MODE")
-        print("="*50)
-        
-        # Create small network
-        network = self.create_network("small")
-        network.initialize_simulation()
-        
-        # Run a few steps
-        print("\nRunning basic functionality test...")
-        for i in range(5):
-            step_results = network.step()
-            new_tasks = len(step_results.get('new_tasks', []))
-            print(f"  Step {i+1}: {new_tasks} new tasks generated")
-        
-        # Get results
-        performance = network.get_performance_summary()
-        metrics = performance['final_metrics']
-        
-        print(f"\nTest Results:")
-        print(f"  ✓ Tasks generated: {metrics.total_tasks_generated}")
-        print(f"  ✓ Tasks completed: {metrics.total_tasks_completed}")
-        print(f"  ✓ Success rate: {metrics.success_rate:.3f}")
-        print(f"  ✓ System working correctly!")
-        
-        return True
-    
-    def run_detailed_simulation(self, logging_level: str = "medium"):
-        """Run detailed simulation with configurable logging."""
-        print("🔍 SAGIN DETAILED SIMULATION")
-        print("="*50)
-        
-        # Create network
-        network = self.create_network("large")
-        
-        # Enable detailed logging based on level
-        if logging_level in ["medium", "high"]:
-            network.log_decisions = True
-            network.log_resource_usage = True
+        # Configure logging based on config
+        if config.simulation.logging_level in ["medium", "high"]:
+            network.log_decisions = config.simulation.log_decisions
+            network.log_resource_usage = config.simulation.log_resource_usage
         
         network.initialize_simulation()
-        self.add_burst_events(network, "heavy")
         
-        # Configure epochs based on logging level
-        if logging_level == "high":
-            num_epochs = 100
-            detailed_interval = 2
-            progress_interval = 10
-        elif logging_level == "medium":
-            num_epochs = 200
-            detailed_interval = 5
-            progress_interval = 25
-        else:  # low
-            num_epochs = 500
-            detailed_interval = 0
-            progress_interval = 50
-        
-        print(f"\nRunning {num_epochs}-epoch simulation with {logging_level} logging...")
+        print(f"\nRunning {config.simulation.total_epochs}-epoch simulation with {config.simulation.logging_level} logging...")
         
         # Track metrics
         self.metrics_history = []
         
         def progress_callback(epoch: int, total_epochs: int, step_results: Dict):
             """Track progress and metrics."""
-            if epoch % progress_interval == 0:
+            if epoch % config.simulation.progress_interval == 0:
                 metrics = network.metrics
                 self.metrics_history.append({
                     'epoch': epoch,
@@ -216,21 +129,21 @@ class SAGINDemo:
                       f"Load: {metrics.load_imbalance:.3f}")
         
         # Run simulation
-        if detailed_interval > 0:
-            print(f"\n🔍 Running with detailed logging every {detailed_interval} epochs...")
+        if config.simulation.detailed_interval > 0 and config.simulation.logging_level == "high":
+            print(f"\n🔍 Running with detailed logging every {config.simulation.detailed_interval} epochs...")
             network.run_simulation_with_detailed_logging(
-                num_epochs, detailed_interval, progress_callback
+                config.simulation.total_epochs, config.simulation.detailed_interval, progress_callback
             )
         else:
             print(f"\n📊 Running standard simulation...")
-            network.run_simulation(num_epochs, progress_callback)
+            network.run_simulation(config.simulation.total_epochs, progress_callback)
         
         # Show detailed analysis
-        if logging_level in ["medium", "high"]:
+        if config.simulation.logging_level in ["medium", "high"]:
             print("\n🔍 DETAILED ANALYSIS")
             print("="*50)
-            network.print_decision_analysis(min(50, num_epochs))
-            network.print_resource_utilization_summary(min(25, num_epochs))
+            network.print_decision_analysis(min(50, config.simulation.total_epochs))
+            network.print_resource_utilization_summary(min(25, config.simulation.total_epochs))
         
         return network
     
@@ -243,6 +156,8 @@ class SAGINDemo:
         network_state = network.get_network_state()
         performance = network.get_performance_summary()
         
+        print(f"Configuration: {self.current_config.name}")
+        print(f"Description: {self.current_config.description}")
         print(f"Simulation Time: {network_state['current_time']:.1f} seconds")
         print(f"Total Epochs: {network_state['epoch_count']}")
         print()
@@ -289,7 +204,7 @@ class SAGINDemo:
         
         # Create comprehensive plot
         fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        fig.suptitle('SAGIN Network Simulation Results', fontsize=16)
+        fig.suptitle(f'SAGIN Network Simulation Results: {self.current_config.name}', fontsize=16)
         
         # Plot metrics
         axes[0, 0].plot(epochs, success_rates, 'b-', linewidth=2)
@@ -345,9 +260,10 @@ Coverage: {final_metrics['final_metrics'].coverage_percentage:.1f}%"""
         plt.tight_layout()
         plt.show()
     
-    def export_results(self, network: SAGINNetwork, filename: str = "sagin_results.json"):
+    def export_results(self, network: SAGINNetwork):
         """Export simulation results."""
         try:
+            filename = self.current_config.simulation.results_filename
             network.export_results(filename)
             print(f"\n💾 Results exported to '{filename}'")
         except Exception as e:
@@ -355,8 +271,8 @@ Coverage: {final_metrics['final_metrics'].coverage_percentage:.1f}%"""
 
 
 def main():
-    """Main function with interactive menu."""
-    print("🛰️  SAGIN Network Simulation")
+    """Main function with configuration-based menu."""
+    print("🛰️  SAGIN Network Simulation (Configuration-Based)")
     print("Space-Air-Ground Integrated Network")
     print("="*60)
     
@@ -364,56 +280,50 @@ def main():
     
     while True:
         print("\nSelect simulation mode:")
-        print("1. 🧪 Test Mode (Quick validation - 5 steps)")
-        print("2. 📊 Standard Simulation (Medium logging - 200 epochs)")
-        print("3. 🔍 Detailed Simulation (High logging - 100 epochs)")
-        print("4. 🚀 Full Simulation (Low logging - 500 epochs)")
-        print("5. 🎯 Custom Simulation (Choose your settings)")
+        print("1. 📋 List available configurations")
+        print("2. ℹ️  Show configuration details")
+        print("3. 🚀 Run simulation with configuration")
+        print("4. 🧪 Quick test (small_test config)")
         print("0. ❌ Exit")
         print("=" * 60)
         
         try:
-            choice = input("\nEnter choice (0-5): ").strip()
+            choice = input("\nEnter choice (0-4): ").strip()
             
             if choice == '1':
-                demo.run_test_mode()
+                print_config_summary()
                 
             elif choice == '2':
-                network = demo.run_detailed_simulation("low")
-                demo.print_summary(network)
+                config_name = input("Enter configuration name: ").strip()
+                print_config_summary(config_name)
                 
             elif choice == '3':
-                network = demo.run_detailed_simulation("medium")
-                demo.print_summary(network)
+                print("\nAvailable configurations:")
+                configs = list_available_configs()
+                for i, config in enumerate(configs, 1):
+                    print(f"  {i}. {config}")
+                
+                try:
+                    selection = input("\nEnter configuration name or number: ").strip()
+                    if selection.isdigit():
+                        config_idx = int(selection) - 1
+                        if 0 <= config_idx < len(configs):
+                            config_name = configs[config_idx]
+                        else:
+                            print("Invalid selection")
+                            continue
+                    else:
+                        config_name = selection
+                    
+                    network = demo.run_simulation(config_name)
+                    demo.print_summary(network)
+                    
+                except (ValueError, IndexError):
+                    print("Invalid selection")
+                    continue
                 
             elif choice == '4':
-                network = demo.run_detailed_simulation("low")
-                demo.print_summary(network)
-                
-            elif choice == '5':
-                # Custom simulation
-                print("\nCustom Simulation Settings:")
-                scale = input("Network scale (small/medium/large) [medium]: ").strip() or "medium"
-                
-                print("\nAvailable grid configurations:")
-                print("  small_square (3x3)")
-                print("  medium_square (4x4)")
-                print("  large_square (5x5)")
-                print("  rectangular_5x10 (5x10)")
-                print("  rectangular_10x5 (10x5)")
-                print("  highway_1x20 (1x20)")
-                print("  city_8x12 (8x12)")
-                
-                grid_config_name = input("Grid configuration [rectangular_5x10]: ").strip() or "rectangular_5x10"
-                logging = input("Logging level (low/medium/high) [medium]: ").strip() or "medium"
-                
-                network = demo.create_network(scale, grid_config_name)
-                network.initialize_simulation()
-                
-                burst = input("Burst intensity (light/medium/heavy) [medium]: ").strip() or "medium"
-                demo.add_burst_events(network, burst)
-                
-                network = demo.run_detailed_simulation(logging)
+                network = demo.run_simulation("small_test")
                 demo.print_summary(network)
                 
             elif choice == '0':
@@ -424,7 +334,7 @@ def main():
                 print("Invalid choice. Please try again.")
                 continue
             
-            if choice in ['2', '3', '4', '5']:
+            if choice in ['3', '4']:
                 # Post-simulation options
                 print("\nPost-simulation options:")
                 print("p. 📈 Plot results")
@@ -440,8 +350,7 @@ def main():
                         print(f"Could not display plots: {e}")
                 
                 elif post_choice == 'e':
-                    filename = input("Export filename [sagin_results.json]: ").strip()
-                    demo.export_results(network, filename or "sagin_results.json")
+                    demo.export_results(network)
         
         except (EOFError, KeyboardInterrupt):
             print("\nExiting...")

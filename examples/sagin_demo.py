@@ -11,11 +11,7 @@ This single script provides all SAGIN simulation functionality with configurable
 
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -23,8 +19,9 @@ from typing import List, Dict, Optional
 import time
 import json
 
-from core.network import SAGINNetwork
-from core.types import SystemParameters, Position
+from src.core.network import SAGINNetwork
+from src.core.types import SystemParameters, Position
+from config.grid_config import get_sagin_config, list_available_configs, print_config_summary
 
 
 class SAGINDemo:
@@ -34,8 +31,8 @@ class SAGINDemo:
         self.network = None
         self.metrics_history = []
     
-    def create_network(self, scale: str = "medium") -> SAGINNetwork:
-        """Create a SAGIN network with configurable scale."""
+    def create_network(self, scale: str = "medium", grid_config_name: str = None) -> SAGINNetwork:
+        """Create a SAGIN network with configurable scale and grid."""
         if scale == "small":
             # Small network for testing/quick demos
             params = SystemParameters(
@@ -46,8 +43,7 @@ class SAGINDemo:
                 uav_altitude=100.0,
                 max_load_imbalance=0.3
             )
-            area_bounds = (0.0, 5000.0, 0.0, 5000.0)
-            num_regions = 3
+            grid_config = get_grid_config(grid_config_name or "small_square")
             random_vehicles = 20
             bus_vehicles = 5
             dynamic_uavs = 3
@@ -64,8 +60,7 @@ class SAGINDemo:
                 uav_altitude=100.0,
                 max_load_imbalance=0.3
             )
-            area_bounds = (0.0, 8000.0, 0.0, 8000.0)
-            num_regions = 4
+            grid_config = get_grid_config(grid_config_name or "rectangular_5x10")
             random_vehicles = 50
             bus_vehicles = 15
             dynamic_uavs = 7
@@ -82,8 +77,7 @@ class SAGINDemo:
                 uav_altitude=100.0,
                 max_load_imbalance=0.3
             )
-            area_bounds = (0.0, 10000.0, 0.0, 10000.0)
-            num_regions = 5
+            grid_config = get_grid_config(grid_config_name or "city_8x12")
             random_vehicles = 80
             bus_vehicles = 20
             dynamic_uavs = 10
@@ -93,24 +87,23 @@ class SAGINDemo:
         # Initialize network
         network = SAGINNetwork(params)
         
-        # Setup network topology
-        network.setup_network_topology(area_bounds, num_regions=num_regions)
+        # Setup network topology using grid configuration
+        network.setup_network_topology(grid_config=grid_config)
         
         # Add vehicles
-        random_veh = network.add_vehicles(random_vehicles, area_bounds, vehicle_type="random")
-        bus_veh = network.add_vehicles(bus_vehicles, area_bounds, vehicle_type="bus")
+        random_veh = network.add_vehicles(random_vehicles, grid_config.area_bounds, vehicle_type="random")
+        bus_veh = network.add_vehicles(bus_vehicles, grid_config.area_bounds, vehicle_type="bus")
         
         # Add dynamic UAVs
-        dynamic_uav_list = network.add_dynamic_uavs(dynamic_uavs, area_bounds)
+        dynamic_uav_list = network.add_dynamic_uavs(dynamic_uavs, grid_config.area_bounds)
         
         # Add satellite constellation
         satellite_list = network.add_satellite_constellation(num_satellites=satellites, num_planes=planes)
         
-        print(f"Created {scale} SAGIN network with:")
-        print(f"  - {num_regions} regions ({area_bounds[1]/1000:.0f}km x {area_bounds[3]/1000:.0f}km)")
+        print(f"Created {scale} SAGIN network with {grid_config_name or 'default'} grid:")
         print(f"  - {len(random_veh)} random vehicles")
         print(f"  - {len(bus_veh)} bus vehicles")
-        print(f"  - {num_regions} static UAVs (1 per region)")
+        print(f"  - {grid_config.total_regions} static UAVs (1 per region)")
         print(f"  - {len(dynamic_uav_list)} dynamic UAVs")
         print(f"  - {len(satellite_list)} satellites")
         
@@ -401,9 +394,20 @@ def main():
                 # Custom simulation
                 print("\nCustom Simulation Settings:")
                 scale = input("Network scale (small/medium/large) [medium]: ").strip() or "medium"
+                
+                print("\nAvailable grid configurations:")
+                print("  small_square (3x3)")
+                print("  medium_square (4x4)")
+                print("  large_square (5x5)")
+                print("  rectangular_5x10 (5x10)")
+                print("  rectangular_10x5 (10x5)")
+                print("  highway_1x20 (1x20)")
+                print("  city_8x12 (8x12)")
+                
+                grid_config_name = input("Grid configuration [rectangular_5x10]: ").strip() or "rectangular_5x10"
                 logging = input("Logging level (low/medium/high) [medium]: ").strip() or "medium"
                 
-                network = demo.create_network(scale)
+                network = demo.create_network(scale, grid_config_name)
                 network.initialize_simulation()
                 
                 burst = input("Burst intensity (light/medium/heavy) [medium]: ").strip() or "medium"

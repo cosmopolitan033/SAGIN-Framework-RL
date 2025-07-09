@@ -3,6 +3,7 @@ UAV models for static and dynamic UAVs in the SAGIN system.
 """
 
 import numpy as np
+import math
 from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass, field
 from enum import Enum
@@ -35,8 +36,8 @@ class UAV:
     altitude: float = 100.0  # m
     
     # Energy system
-    battery_capacity: float = 10000.0  # J
-    current_energy: float = 10000.0  # J
+    battery_capacity: float = math.inf
+    current_energy: float = math.inf  # J
     min_energy_threshold: float = 1000.0  # J
     
     # Communication

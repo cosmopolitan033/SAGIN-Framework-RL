@@ -106,31 +106,53 @@ class SAGINNetwork:
         
         return region_id
     
-    def setup_network_topology(self, area_bounds: Tuple[float, float, float, float],
-                             num_regions: int = 5) -> None:
-        """Setup network topology with regions."""
-        min_x, max_x, min_y, max_y = area_bounds
-        
-        # Create regions in a grid pattern
-        cols = int(np.ceil(np.sqrt(num_regions)))
-        rows = int(np.ceil(num_regions / cols))
-        
-        region_width = (max_x - min_x) / cols
-        region_height = (max_y - min_y) / rows
-        
-        for i in range(num_regions):
-            row = i // cols
-            col = i % cols
+    def setup_network_topology(self, grid_config=None, area_bounds=None, num_regions=None) -> None:
+        """Setup network topology with regions using grid configuration."""
+        # Handle backward compatibility
+        if grid_config is None:
+            # Import here to avoid circular imports
+            import sys
+            import os
+            sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+            from config.grid_config import GridConfig
             
-            center_x = min_x + (col + 0.5) * region_width
-            center_y = min_y + (row + 0.5) * region_height
-            radius = min(region_width, region_height) / 2
+            if area_bounds is None:
+                area_bounds = (0.0, 10000.0, 0.0, 10000.0)
+            if num_regions is None:
+                num_regions = 5
             
-            center = Position(center_x, center_y, 0.0)
-            region_id = self.create_region(f"Region_{i+1}", center, radius)
-            
-            # Set random base intensity
-            self.regions[region_id].base_intensity = np.random.uniform(0.5, 2.0)
+            # Create square grid for backward compatibility
+            cols = int(np.ceil(np.sqrt(num_regions)))
+            rows = int(np.ceil(num_regions / cols))
+            grid_config = GridConfig(
+                grid_rows=rows,
+                grid_cols=cols,
+                area_bounds=area_bounds
+            )
+        
+        # Create regions in grid pattern
+        for row in range(grid_config.grid_rows):
+            for col in range(grid_config.grid_cols):
+                region_id = grid_config.get_region_id(row, col)
+                center_x, center_y = grid_config.get_region_center(row, col)
+                
+                # Calculate radius based on region size
+                radius = min(grid_config.region_width, grid_config.region_height) / 2
+                
+                # Create region
+                center = Position(center_x, center_y, 0.0)
+                created_region_id = self.create_region(f"Region_{row+1}_{col+1}", center, radius)
+                
+                # Set base intensity with some variance
+                base_intensity = grid_config.region_base_intensity + \
+                               np.random.uniform(-grid_config.region_intensity_variance, 
+                                               grid_config.region_intensity_variance)
+                self.regions[created_region_id].base_intensity = max(0.1, base_intensity)
+        
+        print(f"Created {grid_config.grid_rows}x{grid_config.grid_cols} grid topology:")
+        print(f"  - Total regions: {grid_config.total_regions}")
+        print(f"  - Area: {grid_config.area_bounds[1]/1000:.1f}km x {grid_config.area_bounds[3]/1000:.1f}km")
+        print(f"  - Region size: {grid_config.region_width/1000:.1f}km x {grid_config.region_height/1000:.1f}km")
     
     def add_vehicles(self, count: int, area_bounds: Tuple[float, float, float, float],
                     vehicle_type: str = "random") -> List[int]:
@@ -225,13 +247,12 @@ class SAGINNetwork:
                     percentage = (count / total_vehicles) * 100 if total_vehicles > 0 else 0
                     print(f"    Region {region_id}: {count} vehicles ({percentage:.1f}%)")
                     
-                    # Show vehicle details for small numbers
-                    if count <= 5:
-                        vehicles_in_region = self.vehicle_manager.get_vehicles_in_region(region_id)
-                        for vehicle in vehicles_in_region:
-                            speed = np.sqrt(vehicle.velocity.vx**2 + vehicle.velocity.vy**2 + vehicle.velocity.vz**2)
-                            print(f"      Vehicle {vehicle.id}: pos=({vehicle.position.x:.1f}, {vehicle.position.y:.1f}), "
-                                  f"speed={speed:.1f}m/s")
+                    # Show vehicle details for all vehicles
+                    vehicles_in_region = self.vehicle_manager.get_vehicles_in_region(region_id)
+                    for vehicle in vehicles_in_region:
+                        speed = np.sqrt(vehicle.velocity.vx**2 + vehicle.velocity.vy**2 + vehicle.velocity.vz**2)
+                        print(f"      Vehicle {vehicle.id}: pos=({vehicle.position.x:.1f}, {vehicle.position.y:.1f}), "
+                              f"speed={speed:.1f}m/s")
         
         # 2. Update UAV positions and processing
         if verbose:
@@ -239,11 +260,21 @@ class SAGINNetwork:
         uav_results = self.uav_manager.update_all_uavs(self.current_time, dt)
         step_results['uav_completed'] = uav_results
         
+        # Process completed tasks from UAVs - CRITICAL FIX
+        static_completed = uav_results.get('static_completed', [])
+        dynamic_completed = uav_results.get('dynamic_completed', [])
+        
+        # Mark all UAV completed tasks in the task manager
+        for task in static_completed + dynamic_completed:
+            self.task_manager.mark_task_completed(task)
+            if verbose:
+                print(f"    ✅ Task {task.id} completed by UAV and registered")
+        
         # Log detailed UAV status
         if verbose:
-            static_completed = len(uav_results.get('static_completed', []))
-            dynamic_completed = len(uav_results.get('dynamic_completed', []))
-            print(f"    Tasks completed: Static={static_completed}, Dynamic={dynamic_completed}")
+            static_completed_count = len(static_completed)
+            dynamic_completed_count = len(dynamic_completed)
+            print(f"    Tasks completed: Static={static_completed_count}, Dynamic={dynamic_completed_count}")
             
             # Log static UAV details
             for uav_id, uav in self.uav_manager.static_uavs.items():
@@ -273,10 +304,19 @@ class SAGINNetwork:
         sat_results = self.satellite_constellation.update_all_satellites(self.current_time, dt)
         step_results['satellite_completed'] = sat_results
         
+        # Process completed tasks from satellites - CRITICAL FIX
+        satellite_completed = sat_results.get('satellite_completed', [])
+        
+        # Mark all satellite completed tasks in the task manager
+        for task in satellite_completed:
+            self.task_manager.mark_task_completed(task)
+            if verbose:
+                print(f"    ✅ Task {task.id} completed by satellite and registered")
+        
         # Log detailed satellite status
         if verbose:
-            sat_completed = len(sat_results.get('satellite_completed', []))
-            print(f"    Tasks completed by satellites: {sat_completed}")
+            sat_completed_count = len(satellite_completed)
+            print(f"    Tasks completed by satellites: {sat_completed_count}")
             
             # Log satellite details
             total_sat_workload = 0
@@ -1420,3 +1460,7 @@ class SAGINNetwork:
             except ImportError as e:
                 print(f"Warning: Could not import latency model: {e}")
                 self.latency_model = None
+    
+    def setup_network_topology_with_grid(self, grid_config) -> None:
+        """Setup network topology using a grid configuration object."""
+        self.setup_network_topology(grid_config=grid_config)

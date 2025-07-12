@@ -46,6 +46,9 @@ class SAGINNetwork:
         self.satellite_constellation = SatelliteConstellation(self.system_params)
         self.task_manager = TaskManager(self.system_params)
         
+        # Network topology
+        self.grid = None  # Will be set when topology is configured
+        
         # Communication models - loaded dynamically to avoid import issues
         self.communication_model = None
         self.latency_model = None
@@ -129,6 +132,9 @@ class SAGINNetwork:
                 grid_cols=cols,
                 area_bounds=area_bounds
             )
+        
+        # Store grid configuration for visualization and other uses
+        self.grid = grid_config
         
         # Create regions in grid pattern
         for row in range(grid_config.grid_rows):

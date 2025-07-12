@@ -19,6 +19,7 @@ import json
 
 from src.core.network import SAGINNetwork
 from src.core.types import Position
+from src.visualization.real_time_visualizer import RealTimeNetworkVisualizer
 from config.grid_config import get_sagin_config, list_available_configs, print_config_summary
 
 
@@ -284,11 +285,12 @@ def main():
         print("2. ℹ️  Show configuration details")
         print("3. 🚀 Run simulation with configuration")
         print("4. 🧪 Quick test (small_test config)")
+        print("5. 📡 Real-time visualization")
         print("0. ❌ Exit")
         print("=" * 60)
         
         try:
-            choice = input("\nEnter choice (0-4): ").strip()
+            choice = input("\nEnter choice (0-5): ").strip()
             
             if choice == '1':
                 print_config_summary()
@@ -326,6 +328,50 @@ def main():
                 network = demo.run_simulation("small_test")
                 demo.print_summary(network)
                 
+            elif choice == '5':
+                print("\n📡 Real-Time Network Visualization")
+                print("=" * 40)
+                print("Available configurations:")
+                configs = list_available_configs()
+                for i, config in enumerate(configs, 1):
+                    print(f"  {i}. {config}")
+                
+                try:
+                    selection = input("\nEnter configuration name or number for visualization: ").strip()
+                    if selection.isdigit():
+                        config_idx = int(selection) - 1
+                        if 0 <= config_idx < len(configs):
+                            config_name = configs[config_idx]
+                        else:
+                            print("Invalid selection")
+                            continue
+                    else:
+                        config_name = selection
+                    
+                    # Create network for visualization
+                    print(f"\n🔧 Setting up {config_name} network for real-time visualization...")
+                    network = demo.create_network(config_name)
+                    network.initialize_simulation()
+                    
+                    print("🎨 Starting real-time visualization...")
+                    print("   - Color-coded regions show computational load")
+                    print("   - Blue dots: Vehicles")
+                    print("   - Green triangles: UAVs")
+                    print("   - Green circles: UAV coverage zones")
+                    print("   - Colored lines: Communication links")
+                    print("\n⚠️  Close the visualization window to return to menu")
+                    
+                    try:
+                        visualizer = RealTimeNetworkVisualizer(network)
+                        visualizer.run()
+                    except Exception as e:
+                        print(f"Visualization error: {e}")
+                        print("Make sure matplotlib is properly installed.")
+                    
+                except (ValueError, IndexError):
+                    print("Invalid selection")
+                    continue
+                
             elif choice == '0':
                 print("Goodbye! 👋")
                 break
@@ -338,16 +384,26 @@ def main():
                 # Post-simulation options
                 print("\nPost-simulation options:")
                 print("p. 📈 Plot results")
+                print("v. 📡 Real-time visualization")
                 print("e. 💾 Export results")
                 print("c. 🔄 Continue with new simulation")
                 
-                post_choice = input("Enter choice (p/e/c) or press Enter to continue: ").strip()
+                post_choice = input("Enter choice (p/v/e/c) or press Enter to continue: ").strip()
                 
                 if post_choice == 'p':
                     try:
                         demo.plot_results(network)
                     except Exception as e:
                         print(f"Could not display plots: {e}")
+                
+                elif post_choice == 'v':
+                    try:
+                        print("🎨 Starting post-simulation visualization...")
+                        print("⚠️  Close the visualization window to return to menu")
+                        visualizer = RealTimeNetworkVisualizer(network)
+                        visualizer.run(enable_simulation=False)  # Static visualization of final state
+                    except Exception as e:
+                        print(f"Visualization error: {e}")
                 
                 elif post_choice == 'e':
                     demo.export_results(network)

@@ -66,8 +66,8 @@ class Satellite:
     uplink_bandwidth: float = 50.0  # MHz
     
     # Coverage
-    coverage_radius: float = 500000.0  # m (500 km radius)
-    min_elevation_angle: float = 10.0  # degrees
+    coverage_radius: float = 2000000.0  # m (2000 km radius - more realistic for LEO satellites)
+    min_elevation_angle: float = 5.0  # degrees (reduced for better coverage)
     
     # Task management
     task_queue: List[Task] = field(default_factory=list)
@@ -113,6 +113,9 @@ class Satellite:
             # GEO satellites are stationary relative to Earth
             return
         
+        # Earth radius in meters
+        EARTH_RADIUS = 6371000.0  # 6,371 km
+        
         # Simplified circular orbit model
         period = self.orbital_params.orbital_period
         angular_velocity = 2 * math.pi / period
@@ -122,18 +125,30 @@ class Satellite:
         angle_change = angular_velocity * time_since_epoch
         
         # Update position (simplified circular orbit)
-        radius = self.orbital_params.semi_major_axis * 1000
+        # Orbital radius from Earth's center
+        orbital_radius = EARTH_RADIUS + (self.orbital_params.semi_major_axis * 1000)
         current_angle = (current_time * angular_velocity) % (2 * math.pi)
         
-        # Position in orbital plane
-        x = radius * math.cos(current_angle)
-        y = radius * math.sin(current_angle)
-        z = radius  # Simplified - assumes orbit above equator
+        # Position in orbital plane (Earth-centered coordinates)
+        orbit_x = orbital_radius * math.cos(current_angle)
+        orbit_y = orbital_radius * math.sin(current_angle)
+        orbit_z = 0.0  # Simplified - assumes orbit above equator
+        
+        # Convert to ground-relative coordinates for SAGIN simulation
+        # We'll use the altitude above ground as z-coordinate
+        altitude = self.orbital_params.semi_major_axis * 1000  # Height above Earth surface
+        
+        # Project orbit position to simulation area (simplified)
+        # Map orbital position to simulation coordinates
+        sim_area_scale = 50000.0  # Scale factor to map orbit to simulation area
+        x = (orbit_x / orbital_radius) * sim_area_scale
+        y = (orbit_y / orbital_radius) * sim_area_scale
+        z = altitude  # Height above ground level
         
         self.position = Position(x, y, z)
         
         # Update velocity
-        v_magnitude = 2 * math.pi * radius / period
+        v_magnitude = 2 * math.pi * orbital_radius / period
         self.velocity = Velocity(
             -v_magnitude * math.sin(current_angle),
             v_magnitude * math.cos(current_angle),
@@ -144,19 +159,27 @@ class Satellite:
     
     def is_visible_from_position(self, ground_position: Position) -> bool:
         """Check if satellite is visible from a ground position."""
-        # Calculate distance and elevation angle
+        # Calculate vector from ground to satellite
         ground_to_sat = self.position - ground_position
-        distance = ground_to_sat.distance_to(Position(0, 0, 0))
+        
+        # Calculate 3D distance
+        distance_3d = math.sqrt(ground_to_sat.x**2 + ground_to_sat.y**2 + ground_to_sat.z**2)
         
         # Check if within coverage radius
-        if distance > self.coverage_radius:
+        if distance_3d > self.coverage_radius:
             return False
         
         # Calculate elevation angle
         horizontal_distance = math.sqrt(ground_to_sat.x**2 + ground_to_sat.y**2)
-        elevation_angle = math.degrees(math.atan2(ground_to_sat.z, horizontal_distance))
         
-        return elevation_angle >= self.min_elevation_angle
+        # Avoid division by zero
+        if horizontal_distance == 0:
+            elevation_angle = 90.0  # Satellite directly overhead
+        else:
+            elevation_angle = math.degrees(math.atan2(ground_to_sat.z, horizontal_distance))
+        
+        # Check minimum elevation angle and ensure satellite is above ground
+        return elevation_angle >= self.min_elevation_angle and ground_to_sat.z > 0
     
     def calculate_link_distance(self, ground_position: Position) -> float:
         """Calculate link distance to ground position."""
@@ -401,4 +424,58 @@ class SatelliteConstellation:
                 for sat in self.satellites.values()
             ]),
             'constellation_health': sum(1 for sat in self.satellites.values() if sat.is_active) / len(self.satellites)
+        }
+    
+    def get_communication_delay(self, ground_position: Position) -> float:
+        """Calculate communication delay to best available satellite."""
+        best_satellite = self.get_best_satellite(ground_position)
+        
+        if best_satellite is None:
+            return float('inf')  # No satellite available
+        
+        # Calculate round-trip time
+        distance = best_satellite.calculate_link_distance(ground_position)
+        
+        # Speed of light in vacuum (approximately)
+        speed_of_light = 3e8  # m/s
+        
+        # Propagation delay (one way)
+        propagation_delay = distance / speed_of_light
+        
+        # Add processing delays (simplified)
+        transmission_delay = 0.001  # 1ms for transmission processing
+        processing_delay = 0.002    # 2ms for satellite processing
+        
+        # Total delay (round trip)
+        total_delay = 2 * propagation_delay + transmission_delay + processing_delay
+        
+        return total_delay
+    
+    def get_link_quality_to_region(self, ground_position: Position) -> Dict[str, float]:
+        """Get link quality metrics to best satellite from ground position."""
+        best_satellite = self.get_best_satellite(ground_position)
+        
+        if best_satellite is None:
+            return {
+                'distance': float('inf'),
+                'elevation_angle': 0.0,
+                'communication_delay': float('inf'),
+                'link_available': False
+            }
+        
+        # Calculate metrics
+        distance = best_satellite.calculate_link_distance(ground_position)
+        
+        # Calculate elevation angle
+        ground_to_sat = best_satellite.position - ground_position
+        horizontal_distance = math.sqrt(ground_to_sat.x**2 + ground_to_sat.y**2)
+        elevation_angle = math.degrees(math.atan2(ground_to_sat.z, horizontal_distance)) if horizontal_distance > 0 else 90.0
+        
+        return {
+            'distance': distance,
+            'elevation_angle': elevation_angle,
+            'communication_delay': self.get_communication_delay(ground_position),
+            'satellite_id': best_satellite.id,
+            'workload_factor': best_satellite.total_workload / best_satellite.cpu_capacity,
+            'link_available': True
         }

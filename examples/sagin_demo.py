@@ -18,6 +18,7 @@ import time
 import json
 
 from src.core.network import SAGINNetwork
+from src.core.uavs import UAVStatus
 from src.core.types import Position
 from src.visualization.real_time_visualizer import RealTimeNetworkVisualizer
 from config.grid_config import get_sagin_config, list_available_configs, print_config_summary
@@ -63,6 +64,27 @@ class SAGINDemo:
             config.uavs.dynamic_uavs, 
             config.grid.area_bounds
         )
+        
+        # Assign dynamic UAVs to initial regions based on their positions
+        for uav_id in dynamic_uav_list:
+            uav = network.uav_manager.dynamic_uavs[uav_id]
+            # Find the closest region to this UAV's position
+            closest_region_id = None
+            min_distance = float('inf')
+            
+            for region_id, region in network.regions.items():
+                distance = uav.position.distance_to(region.center)
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_region_id = region_id
+            
+            if closest_region_id is not None:
+                uav.assigned_region_id = closest_region_id
+                uav.status = UAVStatus.ACTIVE
+                uav.availability_indicator = 1
+                print(f"  Assigned dynamic UAV {uav_id} to region {closest_region_id}")
+            else:
+                print(f"  Warning: Could not assign dynamic UAV {uav_id} to any region")
         
         # Add satellite constellation according to configuration
         satellite_list = network.add_satellite_constellation(

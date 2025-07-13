@@ -22,11 +22,17 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from src.core.types import NodeType
+from src.core.uavs import UAVStatus
 
 
 class RealTimeNetworkVisualizer:
     def __init__(self, network):
         self.network = network
+        
+        # Initialize simulation if not already running
+        if not network.is_running:
+            network.initialize_simulation()
+            
         self.fig, self.ax = plt.subplots(figsize=(15, 10))
         self.grid = network.grid
         self.simulation_running = False
@@ -140,14 +146,22 @@ class RealTimeNetworkVisualizer:
         # Draw dynamic UAVs
         dynamic_positions = []
         for uav in self.network.uav_manager.dynamic_uavs.values():
-            if uav.is_available:  # Use is_available property instead of is_active
-                dynamic_positions.append([uav.position.x, uav.position.y])
-                # Draw coverage zone
+            # Draw all dynamic UAVs regardless of availability status
+            dynamic_positions.append([uav.position.x, uav.position.y])
+            # Draw coverage zone with different color based on status
+            if uav.status.value == "flying":
+                # Flying UAVs get orange coverage zones
+                coverage = patches.Circle(
+                    (uav.position.x, uav.position.y), uav.communication_range,
+                    color='orange', alpha=0.15, zorder=1
+                )
+            else:
+                # Active UAVs get red coverage zones
                 coverage = patches.Circle(
                     (uav.position.x, uav.position.y), uav.communication_range,
                     color='red', alpha=0.1, zorder=1
                 )
-                self.ax.add_patch(coverage)
+            self.ax.add_patch(coverage)
         
         # Plot static UAVs
         if static_positions:
@@ -158,12 +172,20 @@ class RealTimeNetworkVisualizer:
                 zorder=4, edgecolors='black'
             )
         
-        # Plot dynamic UAVs
+        # Plot dynamic UAVs with different colors based on status
         if dynamic_positions:
             dynamic_positions = np.array(dynamic_positions)
+            # Color UAVs based on their status
+            colors = []
+            for uav in self.network.uav_manager.dynamic_uavs.values():
+                if uav.status.value == "flying":
+                    colors.append('orange')  # Orange for flying UAVs
+                else:
+                    colors.append('red')     # Red for active UAVs
+            
             self.ax.scatter(
                 dynamic_positions[:, 0], dynamic_positions[:, 1],
-                c='red', s=60, marker='^', label='Dynamic UAVs', 
+                c=colors, s=60, marker='^', label='Dynamic UAVs', 
                 zorder=4, edgecolors='black'
             )
 
@@ -187,8 +209,9 @@ class RealTimeNetworkVisualizer:
             min_distance = float('inf')
             
             for uav in list(self.network.uav_manager.static_uavs.values()) + list(self.network.uav_manager.dynamic_uavs.values()):
-                if not uav.is_available:
-                    continue
+                # Include all UAVs, not just available ones
+                # if not uav.is_available:
+                #     continue
                 distance = vehicle.position.distance_to(uav.position)
                 if distance < min_distance and distance < uav.communication_range:
                     min_distance = distance
@@ -211,8 +234,31 @@ class RealTimeNetworkVisualizer:
         if self.simulation_running and self.current_epoch < self.max_epochs:
             # Run one simulation step
             try:
-                step_results = self.network.step(verbose=False)
+                # Show repositioning logs every 10 epochs (when repositioning happens)
+                verbose_mode = (self.current_epoch % 10 == 9)  # Epoch 10, 20, 30, etc.
+                step_results = self.network.step(verbose=verbose_mode)
                 self.current_epoch += 1
+                
+                # Debug: Log dynamic UAV positions and status
+                if self.current_epoch % 10 == 0:  # Log every 10 epochs
+                    print(f"\n🚁 Dynamic UAV Status (Epoch {self.current_epoch}):")
+                    for uav_id, uav in self.network.uav_manager.dynamic_uavs.items():
+                        if hasattr(uav, 'target_region_id') and uav.target_region_id is not None:
+                            target_info = f" → {uav.target_region_id}"
+                        else:
+                            target_info = ""
+                        print(f"  UAV {uav_id}: pos=({uav.position.x:.1f}, {uav.position.y:.1f}), "
+                              f"status={uav.status.value}, available={uav.is_available}, "
+                              f"region={uav.assigned_region_id}{target_info}, "
+                              f"energy={uav.current_energy:.1f}")
+                    
+                    # Show total UAV count
+                    total_dynamic = len(self.network.uav_manager.dynamic_uavs)
+                    available_dynamic = len([uav for uav in self.network.uav_manager.dynamic_uavs.values() 
+                                           if uav.status == UAVStatus.ACTIVE])
+                    flying_dynamic = len([uav for uav in self.network.uav_manager.dynamic_uavs.values() 
+                                        if uav.status == UAVStatus.FLYING])
+                    print(f"  Total: {total_dynamic}, Active: {available_dynamic}, Flying: {flying_dynamic}")
                 
                 # Update title with current epoch
                 self.ax.set_title(f'SAGIN Real-Time Network - Epoch {self.current_epoch}/{self.max_epochs}')
@@ -237,8 +283,18 @@ class RealTimeNetworkVisualizer:
         self._draw_uavs()
         self._draw_communication_links()
         
-        # Add legend
-        self.ax.legend(loc='upper right', bbox_to_anchor=(0.98, 0.98))
+        # Add legend with better labels
+        legend_elements = []
+        if hasattr(self, '_has_vehicles') or len(self.network.vehicle_manager.vehicles) > 0:
+            legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=5, label='Vehicles'))
+        if len(self.network.uav_manager.static_uavs) > 0:
+            legend_elements.append(plt.Line2D([0], [0], marker='^', color='w', markerfacecolor='green', markersize=8, label='Static UAVs'))
+        if len(self.network.uav_manager.dynamic_uavs) > 0:
+            legend_elements.append(plt.Line2D([0], [0], marker='^', color='w', markerfacecolor='red', markersize=8, label='Dynamic UAVs (Active)'))
+            legend_elements.append(plt.Line2D([0], [0], marker='^', color='w', markerfacecolor='orange', markersize=8, label='Dynamic UAVs (Flying)'))
+        
+        if legend_elements:
+            self.ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98))
         
         # Add metrics text
         if hasattr(self.network, 'metrics'):

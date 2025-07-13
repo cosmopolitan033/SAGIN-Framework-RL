@@ -10,7 +10,7 @@ from collections import defaultdict
 
 from .types import Position, Region, SystemParameters, TaskDecision
 from .vehicles import VehicleManager
-from .uavs import UAVManager
+from .uavs import UAVManager, UAVStatus
 from .satellites import SatelliteConstellation
 from .tasks import TaskManager
 # Import basic models only to avoid circular dependencies
@@ -294,7 +294,7 @@ class SAGINNetwork:
             for uav_id, uav in self.uav_manager.dynamic_uavs.items():
                 workload = uav.total_workload
                 energy_pct = (uav.current_energy / uav.battery_capacity) * 100
-                current_region = getattr(uav, 'current_region_id', 'N/A')
+                current_region = getattr(uav, 'assigned_region_id', 'N/A')
                 target_region = getattr(uav, 'target_region_id', 'N/A')
                 
                 if uav.status.value == "flying":
@@ -303,6 +303,12 @@ class SAGINNetwork:
                 else:
                     print(f"    Dynamic UAV {uav_id}: {uav.status.value} in region {current_region}, "
                           f"workload={workload:.0f}, energy={energy_pct:.1f}%")
+
+        # 2.1. Dynamic UAV repositioning (every 10 epochs)
+        if self.epoch_count % 10 == 0:
+            if verbose:
+                print(f"  🔄 Checking dynamic UAV repositioning...")
+            self._reposition_dynamic_uavs(verbose)
         
         # 3. Update satellite positions and processing
         if verbose:
@@ -1470,3 +1476,77 @@ class SAGINNetwork:
     def setup_network_topology_with_grid(self, grid_config) -> None:
         """Setup network topology using a grid configuration object."""
         self.setup_network_topology(grid_config=grid_config)
+    
+    def _reposition_dynamic_uavs(self, verbose: bool = False):
+        """Reposition dynamic UAVs to balance load across regions."""
+        if not self.uav_manager.dynamic_uavs:
+            if verbose:
+                print(f"    🔄 No dynamic UAVs available for repositioning")
+            return
+            
+        # Calculate region loads (static UAV workload / capacity)
+        region_loads = {}
+        for region_id in self.regions.keys():
+            static_uav = self.uav_manager.get_static_uav_by_region(region_id)
+            if static_uav:
+                load = static_uav.total_workload / static_uav.cpu_capacity
+                region_loads[region_id] = min(1.0, load)
+            else:
+                region_loads[region_id] = 0.0
+        
+        if verbose:
+            print(f"    📊 Region loads: {region_loads}")
+        
+        # Find overloaded regions (load > 0.2) and underloaded regions (load < 0.05)
+        # Lowered thresholds to make repositioning more likely
+        overloaded_regions = [r for r, load in region_loads.items() if load > 0.2]
+        underloaded_regions = [r for r, load in region_loads.items() if load < 0.05]
+        
+        if verbose:
+            print(f"    🔴 Overloaded regions (>0.3): {overloaded_regions}")
+            print(f"    🟢 Underloaded regions (<0.1): {underloaded_regions}")
+        
+        if not overloaded_regions:
+            if verbose:
+                print(f"    ✅ No overloaded regions found, no repositioning needed")
+            return
+            
+        # Find available dynamic UAVs (not currently flying)
+        available_dynamic_uavs = [
+            uav for uav in self.uav_manager.dynamic_uavs.values() 
+            if uav.status == UAVStatus.ACTIVE and uav.current_energy > uav.min_energy_threshold
+        ]
+        
+        if not available_dynamic_uavs:
+            if verbose:
+                print(f"    ❌ No available dynamic UAVs for repositioning")
+            return
+            
+        if verbose:
+            print(f"    🚁 Available dynamic UAVs: {[uav.id for uav in available_dynamic_uavs]}")
+        
+        # Assign available dynamic UAVs to overloaded regions
+        import random
+        repositioned = 0
+        for uav in available_dynamic_uavs[:len(overloaded_regions)]:  # Limit to available slots
+            target_region = random.choice(overloaded_regions)
+            region_center = self.regions[target_region].center
+            
+            # Only move if not already in the target region
+            if uav.assigned_region_id != target_region:
+                flight_time = uav.assign_to_region(target_region, region_center, self.current_time)
+                repositioned += 1
+                
+                if verbose:
+                    print(f"      ✈️  UAV {uav.id}: moving from region {uav.assigned_region_id} to region {target_region} "
+                          f"(flight time: {flight_time:.1f}s)")
+                
+                # Remove this region from overloaded list to avoid multiple UAVs going to same region
+                if target_region in overloaded_regions:
+                    overloaded_regions.remove(target_region)
+            else:
+                if verbose:
+                    print(f"      ✅ UAV {uav.id}: already in target region {target_region}")
+        
+        if verbose and repositioned == 0:
+            print(f"    ℹ️  No UAVs needed repositioning")

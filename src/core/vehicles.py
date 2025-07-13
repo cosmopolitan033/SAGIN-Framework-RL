@@ -187,6 +187,9 @@ class Vehicle:
     position: Position = field(default_factory=lambda: Position(0.0, 0.0, 0.0))
     velocity: Velocity = field(default_factory=lambda: Velocity(0.0, 0.0, 0.0))
     
+    # Vehicle type for visualization and behavior
+    vehicle_type: str = "random"  # "random" or "bus"
+    
     # Communication parameters
     transmit_power: float = 1.0  # W
     antenna_gain: float = 1.0  # dB
@@ -268,7 +271,7 @@ class VehicleManager:
         self.next_vehicle_id = 1
     
     def add_vehicle(self, position: Position, mobility_model: MobilityModel,
-                   task_generation_rate: float = 1.0) -> int:
+                   task_generation_rate: float = 1.0, vehicle_type: str = "random") -> int:
         """Add a new vehicle to the system."""
         vehicle_id = self.next_vehicle_id
         self.next_vehicle_id += 1
@@ -277,7 +280,8 @@ class VehicleManager:
             id=vehicle_id,
             position=position,
             mobility_model=mobility_model,
-            task_generation_rate=task_generation_rate
+            task_generation_rate=task_generation_rate,
+            vehicle_type=vehicle_type
         )
         
         self.vehicles[vehicle_id] = vehicle
@@ -335,7 +339,7 @@ class VehicleManager:
             # Random task generation rate
             task_rate = np.random.exponential(1.0)
             
-            vehicle_id = self.add_vehicle(position, mobility, task_rate)
+            vehicle_id = self.add_vehicle(position, mobility, task_rate, vehicle_type="random")
             vehicle_ids.append(vehicle_id)
         
         return vehicle_ids
@@ -356,7 +360,7 @@ class VehicleManager:
             # Lower task generation rate for buses
             task_rate = np.random.exponential(0.5)
             
-            vehicle_id = self.add_vehicle(position, mobility, task_rate)
+            vehicle_id = self.add_vehicle(position, mobility, task_rate, vehicle_type="bus")
             vehicle_ids.append(vehicle_id)
         
         return vehicle_ids

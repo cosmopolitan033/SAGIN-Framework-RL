@@ -43,6 +43,8 @@ class RealTimeNetworkVisualizer:
         
         # Color schemes
         self.vehicle_colors = {'random': 'blue', 'bus': 'orange'}
+        self.vehicle_markers = {'random': 'o', 'bus': 's'}  # circles for cars, squares for buses
+        self.vehicle_sizes = {'random': 25, 'bus': 35}     # different sizes
         self.uav_colors = {'static': 'green', 'dynamic': 'red'}
         
         # Setup the plot
@@ -56,11 +58,6 @@ class RealTimeNetworkVisualizer:
         self.ax.set_ylabel('Y (meters)')
         self.ax.set_title('SAGIN Real-Time Network Topology')
         self.ax.grid(True, alpha=0.3)
-        
-        # Add colorbar for region loads
-        self.cbar_ax = self.fig.add_axes([0.92, 0.1, 0.02, 0.8])
-        self.cbar = plt.colorbar(plt.cm.ScalarMappable(cmap='Reds'), cax=self.cbar_ax)
-        self.cbar.set_label('Region Load (Normalized)', rotation=270, labelpad=20)
 
     def _get_region_load(self, region_id):
         """Get normalized load for a region."""
@@ -105,34 +102,44 @@ class RealTimeNetworkVisualizer:
                            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
 
     def _draw_vehicles(self):
-        """Draw all vehicles with different colors for different types."""
+        """Draw all vehicles with different markers and colors for different types."""
         if not self.network.vehicle_manager.vehicles:
             return
-            
-        positions = []
-        colors = []
+        
+        # Separate vehicles by type for different visual representation
+        bus_positions = []
+        car_positions = []
         
         for vehicle in self.network.vehicle_manager.vehicles.values():
-            positions.append([vehicle.position.x, vehicle.position.y])
-            # Color by vehicle type
-            if hasattr(vehicle, 'vehicle_type'):
-                colors.append(self.vehicle_colors.get(vehicle.vehicle_type, 'blue'))
+            position = [vehicle.position.x, vehicle.position.y]
+            if hasattr(vehicle, 'vehicle_type') and vehicle.vehicle_type == 'bus':
+                bus_positions.append(position)
             else:
-                colors.append('blue')
+                car_positions.append(position)
         
-        positions = np.array(positions)
+        # Draw cars (random vehicles) as blue circles
+        if car_positions:
+            car_positions = np.array(car_positions)
+            self.ax.scatter(
+                car_positions[:, 0], car_positions[:, 1], 
+                c='blue', s=25, marker='o', alpha=0.8, 
+                label='Cars', zorder=3, edgecolors='darkblue', linewidths=0.5
+            )
         
-        # No need to remove previous scatter since we use ax.clear() in _update
-        self.ax.scatter(
-            positions[:, 0], positions[:, 1], 
-            c=colors, s=25, alpha=0.8, label='Vehicles', zorder=3
-        )
+        # Draw buses as orange squares
+        if bus_positions:
+            bus_positions = np.array(bus_positions)
+            self.ax.scatter(
+                bus_positions[:, 0], bus_positions[:, 1], 
+                c='orange', s=35, marker='s', alpha=0.8, 
+                label='Buses', zorder=3, edgecolors='darkorange', linewidths=0.5
+            )
 
     def _draw_uavs(self):
-        """Draw UAVs with coverage zones."""
+        """Draw UAVs with coverage zones, preventing visual overlap."""
         # No need to manually remove coverage circles since we use ax.clear() in _update
         
-        # Draw static UAVs
+        # Draw static UAVs first (lower layer)
         static_positions = []
         for uav in self.network.uav_manager.static_uavs.values():
             static_positions.append([uav.position.x, uav.position.y])
@@ -143,91 +150,135 @@ class RealTimeNetworkVisualizer:
             )
             self.ax.add_patch(coverage)
         
-        # Draw dynamic UAVs
-        dynamic_positions = []
-        for uav in self.network.uav_manager.dynamic_uavs.values():
-            # Draw all dynamic UAVs regardless of availability status
-            dynamic_positions.append([uav.position.x, uav.position.y])
-            # Draw coverage zone with different color based on status
-            if uav.status.value == "flying":
-                # Flying UAVs get orange coverage zones
-                coverage = patches.Circle(
-                    (uav.position.x, uav.position.y), uav.communication_range,
-                    color='orange', alpha=0.15, zorder=1
-                )
-            else:
-                # Active UAVs get red coverage zones
-                coverage = patches.Circle(
-                    (uav.position.x, uav.position.y), uav.communication_range,
-                    color='red', alpha=0.1, zorder=1
-                )
-            self.ax.add_patch(coverage)
-        
-        # Plot static UAVs
+        # Plot static UAVs with smaller size and lower z-order
         if static_positions:
             static_positions = np.array(static_positions)
             self.ax.scatter(
                 static_positions[:, 0], static_positions[:, 1],
-                c='green', s=60, marker='^', label='Static UAVs', 
-                zorder=4, edgecolors='black'
+                c='green', s=50, marker='^', label='Static UAVs', 
+                zorder=4, edgecolors='black', linewidths=1
             )
         
-        # Plot dynamic UAVs with different colors based on status
+        # Draw dynamic UAVs second (higher layer) with offsets to prevent overlap
+        dynamic_positions = []
+        dynamic_colors = []
+        dynamic_sizes = []
+        
+        for uav in self.network.uav_manager.dynamic_uavs.values():
+            # Add small visual offset to prevent exact overlap with static UAVs
+            offset_x = 15  # Small offset in meters
+            offset_y = 15
+            
+            # Adjust position with offset for visual separation
+            visual_x = uav.position.x + offset_x
+            visual_y = uav.position.y + offset_y
+            dynamic_positions.append([visual_x, visual_y])
+            
+            # Color and size based on status
+            if uav.status.value == "flying":
+                dynamic_colors.append('orange')  # Orange for flying UAVs
+                dynamic_sizes.append(80)         # Larger size for flying UAVs
+            else:
+                dynamic_colors.append('red')     # Red for active UAVs
+                dynamic_sizes.append(70)         # Standard size for active UAVs
+            
+            # Only draw coverage zone for available (active) UAVs
+            # Use original position (not offset) for coverage zone
+            if uav.is_available:
+                coverage = patches.Circle(
+                    (uav.position.x, uav.position.y), uav.communication_range,
+                    color='red', alpha=0.1, zorder=1
+                )
+                self.ax.add_patch(coverage)
+            # Flying UAVs get no coverage zone (they can't communicate)
+        
+        # Plot dynamic UAVs with higher z-order and variable sizes
         if dynamic_positions:
             dynamic_positions = np.array(dynamic_positions)
-            # Color UAVs based on their status
-            colors = []
-            for uav in self.network.uav_manager.dynamic_uavs.values():
-                if uav.status.value == "flying":
-                    colors.append('orange')  # Orange for flying UAVs
-                else:
-                    colors.append('red')     # Red for active UAVs
-            
             self.ax.scatter(
                 dynamic_positions[:, 0], dynamic_positions[:, 1],
-                c=colors, s=60, marker='^', label='Dynamic UAVs', 
-                zorder=4, edgecolors='black'
+                c=dynamic_colors, s=dynamic_sizes, marker='^', label='Dynamic UAVs', 
+                zorder=5, edgecolors='white', linewidths=1.5, alpha=0.9
             )
 
     def _draw_communication_links(self):
-        """Draw communication links between network elements."""
+        """Draw communication links between network elements with different colors for UAV types."""
         # No need to manually remove link lines since we use ax.clear() in _update
+        
+        # Get UAVs separated by type
+        static_uavs = [uav for uav in self.network.uav_manager.static_uavs.values() 
+                      if uav.is_available]
+        dynamic_uavs = [uav for uav in self.network.uav_manager.dynamic_uavs.values() 
+                       if uav.is_available and uav.status.value != "flying"]
         
         # Sample some communication links for visualization
         # For performance, we'll only show a subset of active links
         links_drawn = 0
         max_links = 50  # Limit for performance
         
-        # Draw some vehicle-to-UAV links
+        # Draw vehicle-to-UAV links
         vehicles_list = list(self.network.vehicle_manager.vehicles.values())
         for vehicle in vehicles_list[:20]:  # Sample first 20 vehicles
             if links_drawn >= max_links:
                 break
                 
-            # Find closest UAV
-            closest_uav = None
-            min_distance = float('inf')
+            # Find closest static UAV
+            closest_static_uav = None
+            closest_dynamic_uav = None
+            min_static_distance = float('inf')
+            min_dynamic_distance = float('inf')
             
-            for uav in list(self.network.uav_manager.static_uavs.values()) + list(self.network.uav_manager.dynamic_uavs.values()):
-                # Include all UAVs, not just available ones
-                # if not uav.is_available:
-                #     continue
+            # Check static UAVs
+            for uav in static_uavs:
                 distance = vehicle.position.distance_to(uav.position)
-                if distance < min_distance and distance < uav.communication_range:
-                    min_distance = distance
-                    closest_uav = uav
+                if distance < min_static_distance and distance < uav.communication_range:
+                    min_static_distance = distance
+                    closest_static_uav = uav
             
-            if closest_uav:
-                # Calculate link quality (simplified)
-                quality = max(0.1, 1.0 - min_distance / closest_uav.communication_range)
-                color = plt.cm.viridis(quality)
-                
-                self.ax.plot(
-                    [vehicle.position.x, closest_uav.position.x],
-                    [vehicle.position.y, closest_uav.position.y],
-                    color=color, linewidth=1, alpha=0.5, zorder=2
-                )
-                links_drawn += 1
+            # Check dynamic UAVs
+            for uav in dynamic_uavs:
+                distance = vehicle.position.distance_to(uav.position)
+                if distance < min_dynamic_distance and distance < uav.communication_range:
+                    min_dynamic_distance = distance
+                    closest_dynamic_uav = uav
+            
+            # Choose the closest UAV overall and draw link with appropriate color
+            if closest_static_uav and closest_dynamic_uav:
+                if min_static_distance <= min_dynamic_distance:
+                    chosen_uav = closest_static_uav
+                    chosen_distance = min_static_distance
+                    link_color_base = 'green'  # Green tones for static UAV links
+                else:
+                    chosen_uav = closest_dynamic_uav
+                    chosen_distance = min_dynamic_distance
+                    link_color_base = 'red'    # Red tones for dynamic UAV links
+            elif closest_static_uav:
+                chosen_uav = closest_static_uav
+                chosen_distance = min_static_distance
+                link_color_base = 'green'      # Green tones for static UAV links
+            elif closest_dynamic_uav:
+                chosen_uav = closest_dynamic_uav
+                chosen_distance = min_dynamic_distance
+                link_color_base = 'red'        # Red tones for dynamic UAV links
+            else:
+                continue
+            
+            # Calculate link quality and apply color based on UAV type
+            quality = max(0.1, 1.0 - chosen_distance / chosen_uav.communication_range)
+            
+            if link_color_base == 'green':
+                # Use green colormap for static UAV links
+                color = plt.cm.Greens(0.4 + 0.6 * quality)  # Range from light to dark green
+            else:
+                # Use red colormap for dynamic UAV links  
+                color = plt.cm.Reds(0.4 + 0.6 * quality)   # Range from light to dark red
+            
+            self.ax.plot(
+                [vehicle.position.x, chosen_uav.position.x],
+                [vehicle.position.y, chosen_uav.position.y],
+                color=color, linewidth=1.5, alpha=0.7, zorder=2
+            )
+            links_drawn += 1
 
     def _update_network_state(self):
         """Update the network by one simulation step."""
@@ -283,18 +334,27 @@ class RealTimeNetworkVisualizer:
         self._draw_uavs()
         self._draw_communication_links()
         
-        # Add legend with better labels
+        # Add enhanced legend with vehicle types and communication link info
         legend_elements = []
-        if hasattr(self, '_has_vehicles') or len(self.network.vehicle_manager.vehicles) > 0:
-            legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=5, label='Vehicles'))
+        
+        # Vehicle types
+        if len(self.network.vehicle_manager.vehicles) > 0:
+            legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=5, label='Cars', markeredgecolor='darkblue'))
+            legend_elements.append(plt.Line2D([0], [0], marker='s', color='w', markerfacecolor='orange', markersize=6, label='Buses', markeredgecolor='darkorange'))
+        
+        # UAV types
         if len(self.network.uav_manager.static_uavs) > 0:
             legend_elements.append(plt.Line2D([0], [0], marker='^', color='w', markerfacecolor='green', markersize=8, label='Static UAVs'))
         if len(self.network.uav_manager.dynamic_uavs) > 0:
             legend_elements.append(plt.Line2D([0], [0], marker='^', color='w', markerfacecolor='red', markersize=8, label='Dynamic UAVs (Active)'))
             legend_elements.append(plt.Line2D([0], [0], marker='^', color='w', markerfacecolor='orange', markersize=8, label='Dynamic UAVs (Flying)'))
         
+        # Communication link types
+        legend_elements.append(plt.Line2D([0], [0], color='green', linewidth=2, label='Links to Static UAVs'))
+        legend_elements.append(plt.Line2D([0], [0], color='red', linewidth=2, label='Links to Dynamic UAVs'))
+        
         if legend_elements:
-            self.ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98))
+            self.ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98), fontsize=9)
         
         # Add metrics text
         if hasattr(self.network, 'metrics'):

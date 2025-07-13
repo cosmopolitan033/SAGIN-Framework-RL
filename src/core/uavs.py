@@ -32,7 +32,7 @@ class UAV:
     velocity: Velocity = field(default_factory=lambda: Velocity(0.0, 0.0, 0.0))
     
     # Physical capabilities
-    max_speed: float = 20.0  # m/s
+    max_speed: float = 250.0  # m/s
     altitude: float = 100.0  # m
     
     # Energy system

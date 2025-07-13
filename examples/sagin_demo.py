@@ -377,10 +377,10 @@ def main():
                     
                     print("🎨 Starting real-time visualization...")
                     print("   - Color-coded regions show computational load")
-                    print("   - Blue dots: Vehicles")
-                    print("   - Green triangles: UAVs")
-                    print("   - Green circles: UAV coverage zones")
-                    print("   - Colored lines: Communication links")
+                    print("   - Blue circles: Cars, Orange squares: Buses")
+                    print("   - Green triangles: Static UAVs, Red/Orange triangles: Dynamic UAVs")
+                    print("   - Coverage zones show UAV communication range")
+                    print("   - Green lines: Links to Static UAVs, Red lines: Links to Dynamic UAVs")
                     print("\n⚠️  Close the visualization window to return to menu")
                     
                     try:

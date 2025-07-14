@@ -88,8 +88,7 @@ class SAGINDemo:
         
         # Add satellite constellation according to configuration
         satellite_list = network.add_satellite_constellation(
-            num_satellites=config.satellites.num_satellites, 
-            num_planes=config.satellites.num_planes
+            num_satellites=config.satellites.num_satellites
         )
         
         # Configure task generation
@@ -385,7 +384,9 @@ def main():
                     
                     try:
                         visualizer = RealTimeNetworkVisualizer(network)
-                        visualizer.run()
+                        # Use the configuration's total epochs for visualization
+                        max_epochs = demo.current_config.simulation.total_epochs
+                        visualizer.run(max_epochs=max_epochs)
                     except Exception as e:
                         print(f"Visualization error: {e}")
                         print("Make sure matplotlib is properly installed.")

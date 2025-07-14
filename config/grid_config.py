@@ -104,7 +104,6 @@ class SatelliteConfig:
     
     # Satellite constellation
     num_satellites: int = 12
-    num_planes: int = 3
     
     # Satellite properties
     altitude: float = 600000.0  # m (600km)
@@ -225,8 +224,7 @@ SAGIN_CONFIGS = {
             dynamic_uavs=2
         ),
         satellites=SatelliteConfig(
-            num_satellites=4,
-            num_planes=2
+            num_satellites=4
         ),
         tasks=TaskConfig(
             base_task_rate=0.5,
@@ -254,8 +252,7 @@ SAGIN_CONFIGS = {
             dynamic_uavs=5
         ),
         satellites=SatelliteConfig(
-            num_satellites=8,
-            num_planes=3
+            num_satellites=8
         ),
         tasks=TaskConfig(
             base_task_rate=1.0,
@@ -283,11 +280,10 @@ SAGIN_CONFIGS = {
             dynamic_uavs=15
         ),
         satellites=SatelliteConfig(
-            num_satellites=12,
-            num_planes=3
+            num_satellites=12
         ),
         tasks=TaskConfig(
-            base_task_rate=1.5,
+            base_task_rate=15,
             burst_events=[(5, 100.0, 50.0, 3.0), (10, 200.0, 30.0, 2.5), (15, 350.0, 40.0, 2.0)]
         ),
         simulation=SimulationConfig(
@@ -313,8 +309,7 @@ SAGIN_CONFIGS = {
             dynamic_uavs=8
         ),
         satellites=SatelliteConfig(
-            num_satellites=6,
-            num_planes=2
+            num_satellites=6
         ),
         tasks=TaskConfig(
             base_task_rate=2.0,
@@ -343,8 +338,7 @@ SAGIN_CONFIGS = {
             dynamic_uavs=20
         ),
         satellites=SatelliteConfig(
-            num_satellites=16,
-            num_planes=4
+            num_satellites=16
         ),
         tasks=TaskConfig(
             base_task_rate=2.5,
@@ -375,8 +369,7 @@ SAGIN_CONFIGS = {
             dynamic_uavs=6
         ),
         satellites=SatelliteConfig(
-            num_satellites=10,
-            num_planes=3
+            num_satellites=10
         ),
         tasks=TaskConfig(
             base_task_rate=0.3,
@@ -421,7 +414,7 @@ def print_config_summary(config_name: str = None):
             print(f"Area: {config.grid.area_bounds[1]/1000:.1f}km x {config.grid.area_bounds[3]/1000:.1f}km")
             print(f"Vehicles: {config.vehicles.random_vehicles} random + {config.vehicles.bus_vehicles} bus")
             print(f"UAVs: {config.grid.total_regions} static + {config.uavs.dynamic_uavs} dynamic")
-            print(f"Satellites: {config.satellites.num_satellites} satellites in {config.satellites.num_planes} planes")
+            print(f"Satellites: {config.satellites.num_satellites} satellites")
             print(f"Simulation: {config.simulation.total_epochs} epochs, {config.simulation.logging_level} logging")
             if config.tasks.burst_events:
                 print(f"Burst events: {len(config.tasks.burst_events)} configured")

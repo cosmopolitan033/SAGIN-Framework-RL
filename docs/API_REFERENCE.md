@@ -17,7 +17,7 @@ network = SAGINNetwork(system_params)
 - `setup_network_topology_with_grid(grid_config)` - Setup grid-based topology
 - `add_vehicles(count, area_bounds, vehicle_type)` - Add vehicles to network
 - `add_dynamic_uavs(count, area_bounds)` - Add dynamic UAVs
-- `add_satellite_constellation(num_satellites, num_planes)` - Add satellites
+- `add_satellite_constellation(num_satellites)` - Add satellites
 - `initialize_simulation()` - Initialize simulation state
 - `step(dt, verbose)` - Execute one simulation step
 - `run_simulation(num_epochs, callback)` - Run complete simulation
@@ -94,7 +94,6 @@ from config.grid_config import SatelliteConfig
 
 satellites = SatelliteConfig(
     num_satellites=12,
-    num_planes=3,
     altitude=600000.0
 )
 ```
@@ -209,7 +208,7 @@ sat_constellation = SatelliteConstellation(system_params)
 ```
 
 #### Methods
-- `create_constellation(num_satellites, num_planes)` - Create satellite constellation
+- `create_constellation(num_satellites)` - Create satellite constellation
 - `update_all_satellites(current_time, dt)` - Update satellite positions
 - `find_visible_satellites(ground_position)` - Find visible satellites
 - `assign_task_to_satellite(task, ground_position)` - Assign task to satellite
@@ -543,7 +542,7 @@ class Satellite:
 #### SatelliteConstellation
 ```python
 class SatelliteConstellation:
-    def create_constellation(self, num_satellites: int, num_planes: int) -> List[int]
+    def create_constellation(self, num_satellites: int) -> List[int]
     def find_visible_satellites(self, ground_position: Position) -> List[Satellite]
     def assign_task_to_satellite(self, task: Task, ground_position: Position) -> bool
 ```

@@ -196,11 +196,10 @@ class SAGINNetwork:
         
         return uav_ids
     
-    def add_satellite_constellation(self, num_satellites: int = 12, 
-                                  num_planes: int = 3) -> List[int]:
+    def add_satellite_constellation(self, num_satellites: int = 12) -> List[int]:
         """Add satellite constellation to the network."""
         return self.satellite_constellation.create_constellation(
-            num_satellites, num_planes
+            num_satellites, num_planes=1  # Single orbital plane for simplified model
         )
     
     def initialize_simulation(self) -> None:

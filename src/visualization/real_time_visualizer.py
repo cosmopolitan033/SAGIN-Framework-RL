@@ -37,7 +37,9 @@ class RealTimeNetworkVisualizer:
         self.grid = network.grid
         self.simulation_running = False
         self.current_epoch = 0
-        self.max_epochs = 100  # Default, can be configured
+        
+        # Auto-detect max epochs from network's system parameters
+        self.max_epochs = getattr(network.system_params, 'total_epochs', 100)  # Default fallback to 100
         
         # Initialize data structures (no longer needed since we use ax.clear())
         
@@ -368,21 +370,25 @@ class RealTimeNetworkVisualizer:
                         fontsize=10, verticalalignment='top',
                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
-    def run(self, interval=1000, enable_simulation=True, max_epochs=100):
+    def run(self, interval=1000, enable_simulation=True, max_epochs=None):
         """
         Run the real-time visualization.
         
         Args:
             interval: Update interval in milliseconds
             enable_simulation: Whether to run simulation steps
-            max_epochs: Maximum number of simulation epochs
+            max_epochs: Maximum number of simulation epochs (if None, uses network's config)
         """
         self.simulation_running = enable_simulation
-        self.max_epochs = max_epochs
+        
+        # Use provided max_epochs or default to network's configuration
+        if max_epochs is not None:
+            self.max_epochs = max_epochs
+        # else: keep the auto-detected value from __init__
         
         print(f"🎨 Starting real-time visualization...")
         if enable_simulation:
-            print(f"   Running simulation for {max_epochs} epochs")
+            print(f"   Running simulation for {self.max_epochs} epochs")
         else:
             print("   Static visualization mode")
         

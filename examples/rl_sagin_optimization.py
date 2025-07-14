@@ -72,7 +72,7 @@ def create_network(args) -> SAGINNetwork:
     network.add_dynamic_uavs(args.dynamic_uavs, area_bounds)
     
     # Add satellite constellation
-    network.add_satellite_constellation(args.satellites, num_planes=1)
+    network.add_satellite_constellation(args.satellites)
     
     # Initialize the simulation
     network.initialize_simulation()

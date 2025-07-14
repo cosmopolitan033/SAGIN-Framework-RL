@@ -161,7 +161,7 @@ Warning: No satellites visible from region X
 **Solutions**:
 ```python
 # Increase constellation size
-network.add_satellite_constellation(num_satellites=18, num_planes=6)
+network.add_satellite_constellation(num_satellites=18)
 
 # Lower satellite altitude (but keep realistic)
 params.satellite_altitude = 500000.0  # 500km instead of 600km

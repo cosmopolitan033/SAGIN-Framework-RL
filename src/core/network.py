@@ -109,7 +109,7 @@ class SAGINNetwork:
         
         return region_id
     
-    def setup_network_topology(self, grid_config=None, area_bounds=None, num_regions=None) -> None:
+    def setup_network_topology(self, grid_config=None, area_bounds=None, num_regions=None, task_config=None) -> None:
         """Setup network topology with regions using grid configuration."""
         # Handle backward compatibility
         if grid_config is None:
@@ -150,7 +150,13 @@ class SAGINNetwork:
                 created_region_id = self.create_region(f"Region_{row+1}_{col+1}", center, radius)
                 
                 # Set base intensity with some variance
-                base_intensity = grid_config.region_base_intensity + \
+                # Use task_config.base_task_rate if available, otherwise fall back to grid_config.region_base_intensity
+                if task_config is not None:
+                    base_task_rate = task_config.base_task_rate
+                else:
+                    base_task_rate = grid_config.region_base_intensity
+                
+                base_intensity = base_task_rate + \
                                np.random.uniform(-grid_config.region_intensity_variance, 
                                                grid_config.region_intensity_variance)
                 self.regions[created_region_id].base_intensity = max(0.1, base_intensity)
@@ -1472,9 +1478,9 @@ class SAGINNetwork:
                 print(f"Warning: Could not import latency model: {e}")
                 self.latency_model = None
     
-    def setup_network_topology_with_grid(self, grid_config) -> None:
+    def setup_network_topology_with_grid(self, grid_config, task_config=None) -> None:
         """Setup network topology using a grid configuration object."""
-        self.setup_network_topology(grid_config=grid_config)
+        self.setup_network_topology(grid_config=grid_config, task_config=task_config)
     
     def _reposition_dynamic_uavs(self, verbose: bool = False):
         """Reposition dynamic UAVs to balance load across regions."""

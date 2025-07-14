@@ -283,7 +283,7 @@ SAGIN_CONFIGS = {
             num_satellites=12
         ),
         tasks=TaskConfig(
-            base_task_rate=15,
+            base_task_rate=1.5,
             burst_events=[(5, 100.0, 50.0, 3.0), (10, 200.0, 30.0, 2.5), (15, 350.0, 40.0, 2.0)]
         ),
         simulation=SimulationConfig(

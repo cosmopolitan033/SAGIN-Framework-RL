@@ -240,9 +240,10 @@ class TaskQueue:
     """Priority queue for task management."""
     
     def __init__(self, max_size: Optional[int] = None):
-        self.heap: List[Tuple[float, float, Task]] = []  # (priority, creation_time, task)
+        self.heap: List[Tuple[float, int, Task]] = []  # (priority, counter, task)
         self.max_size = max_size
         self.dropped_tasks = 0
+        self._counter = 0  # Unique counter to break ties in heap
     
     def add_task(self, task: Task, priority: Optional[float] = None) -> bool:
         """Add a task to the queue."""
@@ -255,7 +256,9 @@ class TaskQueue:
             # Default priority based on deadline urgency
             priority = -task.deadline  # Earlier deadlines have higher priority
         
-        heapq.heappush(self.heap, (priority, task.creation_time, task))
+        # Use counter to ensure heap entries are always comparable
+        heapq.heappush(self.heap, (priority, self._counter, task))
+        self._counter += 1
         return True
     
     def get_next_task(self) -> Optional[Task]:
@@ -280,12 +283,12 @@ class TaskQueue:
         remaining = []
         
         while self.heap:
-            priority, creation_time, task = heapq.heappop(self.heap)
+            priority, counter, task = heapq.heappop(self.heap)
             if task.deadline <= current_time:
                 task.status = TaskStatus.DEADLINE_MISSED
                 expired.append(task)
             else:
-                remaining.append((priority, creation_time, task))
+                remaining.append((priority, counter, task))
         
         # Rebuild heap with remaining tasks
         self.heap = remaining

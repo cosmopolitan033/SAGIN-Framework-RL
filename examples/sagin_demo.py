@@ -45,7 +45,7 @@ class SAGINDemo:
         network = SAGINNetwork(system_params)
         
         # Setup network topology using grid configuration
-        network.setup_network_topology_with_grid(config.grid)
+        network.setup_network_topology_with_grid(config.grid, config.tasks)
         
         # Add vehicles according to configuration
         random_veh = network.add_vehicles(

@@ -397,19 +397,21 @@ class SAGINDemo:
         
         def progress_callback(epoch: int, total_epochs: int, step_results: Dict):
             """Track progress and metrics."""
+            # Capture metrics every epoch for smooth plotting curves
+            metrics = network.metrics
+            self.metrics_history.append({
+                'epoch': epoch,
+                'success_rate': metrics.success_rate,
+                'average_latency': metrics.average_latency,
+                'load_imbalance': metrics.load_imbalance,
+                'uav_utilization': metrics.uav_utilization,
+                'satellite_utilization': metrics.satellite_utilization,
+                'tasks_generated': metrics.total_tasks_generated,
+                'tasks_completed': metrics.total_tasks_completed
+            })
+            
+            # Print progress only at intervals to avoid spam
             if epoch % config.simulation.progress_interval == 0:
-                metrics = network.metrics
-                self.metrics_history.append({
-                    'epoch': epoch,
-                    'success_rate': metrics.success_rate,
-                    'average_latency': metrics.average_latency,
-                    'load_imbalance': metrics.load_imbalance,
-                    'uav_utilization': metrics.uav_utilization,
-                    'satellite_utilization': metrics.satellite_utilization,
-                    'tasks_generated': metrics.total_tasks_generated,
-                    'tasks_completed': metrics.total_tasks_completed
-                })
-                
                 print(f"Epoch {epoch:3d}: Success: {metrics.success_rate:.3f}, "
                       f"Latency: {metrics.average_latency:.3f}s, "
                       f"Load: {metrics.load_imbalance:.3f}")
@@ -488,38 +490,43 @@ class SAGINDemo:
         uav_utilizations = [m['uav_utilization'] for m in self.metrics_history]
         satellite_utilizations = [m['satellite_utilization'] for m in self.metrics_history]
         
+        print(f"📊 Plotting {len(epochs)} data points from simulation...")
+        
         # Create comprehensive plot
         fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        fig.suptitle(f'SAGIN Network Simulation Results: {self.current_config.name}', fontsize=16)
+        fig.suptitle(f'SAGIN Network Simulation Results: {self.current_config.name}\n'
+                    f'Orchestration: {self.orchestration_mode.upper()} '
+                    f'{"(Model: " + self.selected_rl_model + ")" if self.selected_rl_model else ""}', 
+                    fontsize=16)
         
-        # Plot metrics
-        axes[0, 0].plot(epochs, success_rates, 'b-', linewidth=2)
+        # Plot metrics with improved styling
+        axes[0, 0].plot(epochs, success_rates, 'b-', linewidth=2, alpha=0.8)
         axes[0, 0].set_title('Task Success Rate')
         axes[0, 0].set_xlabel('Epoch')
         axes[0, 0].set_ylabel('Success Rate')
         axes[0, 0].grid(True, alpha=0.3)
         axes[0, 0].set_ylim(0, 1)
         
-        axes[0, 1].plot(epochs, avg_latencies, 'r-', linewidth=2)
+        axes[0, 1].plot(epochs, avg_latencies, 'r-', linewidth=2, alpha=0.8)
         axes[0, 1].set_title('Average Task Latency')
         axes[0, 1].set_xlabel('Epoch')
         axes[0, 1].set_ylabel('Latency (s)')
         axes[0, 1].grid(True, alpha=0.3)
         
-        axes[0, 2].plot(epochs, load_imbalances, 'g-', linewidth=2)
+        axes[0, 2].plot(epochs, load_imbalances, 'g-', linewidth=2, alpha=0.8)
         axes[0, 2].set_title('Load Imbalance')
         axes[0, 2].set_xlabel('Epoch')
         axes[0, 2].set_ylabel('Load Imbalance')
         axes[0, 2].grid(True, alpha=0.3)
         
-        axes[1, 0].plot(epochs, uav_utilizations, 'm-', linewidth=2)
+        axes[1, 0].plot(epochs, uav_utilizations, 'm-', linewidth=2, alpha=0.8)
         axes[1, 0].set_title('UAV Utilization')
         axes[1, 0].set_xlabel('Epoch')
         axes[1, 0].set_ylabel('Utilization')
         axes[1, 0].grid(True, alpha=0.3)
         axes[1, 0].set_ylim(0, 1)
         
-        axes[1, 1].plot(epochs, satellite_utilizations, 'c-', linewidth=2)
+        axes[1, 1].plot(epochs, satellite_utilizations, 'c-', linewidth=2, alpha=0.8)
         axes[1, 1].set_title('Satellite Utilization')
         axes[1, 1].set_xlabel('Epoch')
         axes[1, 1].set_ylabel('Utilization')

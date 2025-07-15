@@ -178,27 +178,33 @@ class StaticUAV(UAV):
     
     def make_offloading_decision(self, task: Task, available_dynamic_uavs: int,
                                satellite_available: bool, current_time: float) -> TaskDecision:
-        """Make offloading decision for a task."""
-        # Simple heuristic-based decision making
-        # In practice, this would be replaced by RL policy
+        """Make hierarchical offloading decision for a task.
         
-        # Check if task can be completed locally within deadline
+        Hierarchy: Vehicle → Static UAV → Dynamic UAV → Satellite
+        
+        Static UAV tries to handle locally first, then offloads to dynamic UAV if overloaded,
+        and finally to satellite if both static and dynamic UAVs are unavailable/overloaded.
+        """
+        
+        # Step 1: Try to handle locally (Static UAV processing)
         local_completion_time = current_time + self.estimate_local_completion_time(task)
         
-        if local_completion_time <= task.deadline:
-            # Check current workload
-            if self.total_workload < self.cpu_capacity * 2:  # Not overloaded
-                return TaskDecision.LOCAL
+        # Check if static UAV can handle the task efficiently
+        is_overloaded = self.total_workload >= self.cpu_capacity * 1.5  # Lowered threshold for better hierarchy
+        can_meet_deadline = local_completion_time <= task.deadline
         
-        # Consider dynamic UAVs if available
+        if not is_overloaded and can_meet_deadline:
+            return TaskDecision.LOCAL
+        
+        # Step 2: Offload to Dynamic UAV if static UAV is overloaded or can't meet deadline
         if available_dynamic_uavs > 0:
             return TaskDecision.DYNAMIC
         
-        # Fall back to satellite if available
+        # Step 3: Offload to Satellite if no dynamic UAVs available or all are overloaded
         if satellite_available:
             return TaskDecision.SATELLITE
         
-        # Process locally as last resort
+        # Last resort: Process locally even if overloaded (better than dropping the task)
         return TaskDecision.LOCAL
     
     def estimate_local_completion_time(self, task: Task) -> float:

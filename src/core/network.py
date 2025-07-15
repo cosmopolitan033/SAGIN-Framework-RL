@@ -102,8 +102,9 @@ class SAGINNetwork:
         self.regions[region_id] = region
         
         # Create static UAV for this region
+        static_uav_position = Position(center.x, center.y, self.system_params.static_uav_altitude)
         static_uav_id = self.uav_manager.create_static_uav(
-            region_id, center, cpu_capacity=1e9
+            region_id, static_uav_position, cpu_capacity=1e9
         )
         region.static_uav_id = static_uav_id
         
@@ -195,7 +196,7 @@ class SAGINNetwork:
             # Random initial position
             x = np.random.uniform(min_x, max_x)
             y = np.random.uniform(min_y, max_y)
-            position = Position(x, y, self.system_params.uav_altitude)
+            position = Position(x, y, self.system_params.dynamic_uav_altitude)
             
             uav_id = self.uav_manager.create_dynamic_uav(position)
             uav_ids.append(uav_id)
@@ -339,7 +340,12 @@ class SAGINNetwork:
             total_sat_workload = 0
             visible_sats_per_region = {}
             for region_id, region in self.regions.items():
-                visible_sats = self.satellite_constellation.find_visible_satellites(region.center)
+                # Check satellite visibility from static UAV position instead of ground
+                static_uav = self.uav_manager.get_static_uav_by_region(region_id)
+                if static_uav:
+                    visible_sats = self.satellite_constellation.find_visible_satellites(static_uav.position)
+                else:
+                    visible_sats = self.satellite_constellation.find_visible_satellites(region.center)
                 visible_sats_per_region[region_id] = len(visible_sats)
             
             for sat_id, satellite in self.satellite_constellation.satellites.items():
@@ -465,8 +471,8 @@ class SAGINNetwork:
                 available_dynamic_uavs = self.uav_manager.get_available_dynamic_uavs_in_region(region_id)
                 dynamic_uav_count = len(available_dynamic_uavs)
                 
-                # Check satellite availability
-                visible_satellites = self.satellite_constellation.find_visible_satellites(region.center)
+                # Check satellite availability from static UAV position (not ground level)
+                visible_satellites = self.satellite_constellation.find_visible_satellites(static_uav.position)
                 satellite_available = len(visible_satellites) > 0
                 
                 # Calculate resource metrics for decision
@@ -525,35 +531,72 @@ class SAGINNetwork:
                 return success
         
         elif decision == TaskDecision.DYNAMIC:
-            # Assign to available dynamic UAV
+            # Assign to available dynamic UAV with hierarchical check
             dynamic_uavs = self.uav_manager.get_available_dynamic_uavs_in_region(region_id)
             if dynamic_uavs:
                 # Select UAV with lowest workload
                 selected_uav = min(dynamic_uavs, key=lambda u: u.total_workload)
+                
+                # Check if selected dynamic UAV is also overloaded
+                # If so, escalate to satellite
+                is_dynamic_overloaded = selected_uav.total_workload >= selected_uav.cpu_capacity * 1.5
+                
+                if is_dynamic_overloaded:
+                    # Try satellite first as per hierarchy
+                    region = self.regions[region_id]
+                    static_uav = self.uav_manager.get_static_uav_by_region(region_id)
+                    communication_position = static_uav.position if static_uav else region.center
+                    
+                    satellite_success = self.satellite_constellation.assign_task_to_satellite(
+                        task, communication_position
+                    )
+                    if satellite_success and verbose:
+                        print(f"        🛰️  Task {task.id} escalated to satellite (dynamic UAV {selected_uav.id} overloaded)")
+                        print(f"           Dynamic UAV workload: {selected_uav.total_workload:.0f}/{selected_uav.cpu_capacity:.0f}")
+                        return True
+                    # If satellite fails, still try the dynamic UAV
+                
+                # Assign to dynamic UAV (either not overloaded or satellite failed)
                 success = selected_uav.add_task(task)
                 if success and verbose:
-                    print(f"        ✅ Task {task.id} assigned to Dynamic UAV {selected_uav.id}")
+                    status = "overloaded but processing" if is_dynamic_overloaded else "available"
+                    print(f"        ✅ Task {task.id} assigned to Dynamic UAV {selected_uav.id} ({status})")
                     print(f"           Selected from {len(dynamic_uavs)} available UAVs")
                     print(f"           Workload: {selected_uav.total_workload:.0f}, Energy: {selected_uav.current_energy:.0f}J")
                 return success
             else:
-                # Fallback to static UAV
+                # Fallback to satellite, then static UAV
+                region = self.regions[region_id]
+                static_uav = self.uav_manager.get_static_uav_by_region(region_id)
+                communication_position = static_uav.position if static_uav else region.center
+                
+                satellite_success = self.satellite_constellation.assign_task_to_satellite(
+                    task, communication_position
+                )
+                if satellite_success and verbose:
+                    print(f"        🛰️  Task {task.id} fallback to satellite (no dynamic UAVs available)")
+                    return True
+                
+                # Final fallback to static UAV
                 static_uav = self.uav_manager.get_static_uav_by_region(region_id)
                 if static_uav:
                     success = static_uav.add_task(task)
                     if success and verbose:
-                        print(f"        🔄 Task {task.id} fallback to Static UAV {static_uav.id} (no dynamic UAVs available)")
+                        print(f"        🔄 Task {task.id} fallback to Static UAV {static_uav.id} (no dynamic UAVs or satellites available)")
                     return success
         
         elif decision == TaskDecision.SATELLITE:
-            # Assign to satellite
+            # Assign to satellite from static UAV position
             region = self.regions[region_id]
+            static_uav = self.uav_manager.get_static_uav_by_region(region_id)
+            communication_position = static_uav.position if static_uav else region.center
+            
             success = self.satellite_constellation.assign_task_to_satellite(
-                task, region.center
+                task, communication_position
             )
             if success and verbose:
                 print(f"        🛰️  Task {task.id} assigned to satellite")
-                print(f"           Communication delay: {self.satellite_constellation.get_communication_delay(region.center):.3f}s")
+                print(f"           Communication delay: {self.satellite_constellation.get_communication_delay(communication_position):.3f}s")
                 return success
             else:
                 # Fallback to static UAV
@@ -871,10 +914,12 @@ class SAGINNetwork:
                 'orbital_params': getattr(satellite, 'orbital_params', None)
             }
         
-        # Calculate satellite visibility per region
+        # Calculate satellite visibility per region (from UAV positions)
         visibility_info = {}
         for region_id, region in self.regions.items():
-            visible_sats = self.satellite_constellation.find_visible_satellites(region.center)
+            static_uav = self.uav_manager.get_static_uav_by_region(region_id)
+            check_position = static_uav.position if static_uav else region.center
+            visible_sats = self.satellite_constellation.find_visible_satellites(check_position)
             visibility_info[region_id] = len(visible_sats)
         
         report['satellites'] = {

@@ -189,7 +189,14 @@ class SystemParameters:
     
     # UAV parameters
     uav_max_speed: float = 20.0  # m/s
-    uav_altitude: float = 100.0  # m
+    static_uav_altitude: float = 120.0  # m (static UAVs)
+    dynamic_uav_altitude: float = 240.0  # m (dynamic UAVs at 2x static altitude)
+    
+    # Legacy property for backward compatibility
+    @property
+    def uav_altitude(self) -> float:
+        """Return static UAV altitude for backward compatibility."""
+        return self.static_uav_altitude
     
     # Load balancing
     max_load_imbalance: float = 0.3

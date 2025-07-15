@@ -85,8 +85,15 @@ class UAVConfig:
     
     # UAV properties
     uav_max_speed: float = 20.0  # m/s
-    uav_altitude: float = 100.0  # m
+    static_uav_altitude: float = 120.0  # m (static UAVs at lower altitude)
+    dynamic_uav_altitude: float = 240.0  # m (dynamic UAVs at exactly 2x static altitude)
     uav_cpu_capacity: float = 1e9  # cycles per second
+    
+    # Legacy property for backward compatibility
+    @property
+    def uav_altitude(self) -> float:
+        """Return static UAV altitude for backward compatibility."""
+        return self.static_uav_altitude
     
     # Energy system
     battery_capacity: float = 10000.0  # J
@@ -201,7 +208,8 @@ class SAGINConfig:
             total_epochs=self.simulation.total_epochs,
             min_rate_threshold=self.simulation.min_rate_threshold,
             uav_max_speed=self.uavs.uav_max_speed,
-            uav_altitude=self.uavs.uav_altitude,
+            static_uav_altitude=self.uavs.static_uav_altitude,
+            dynamic_uav_altitude=self.uavs.dynamic_uav_altitude,
             max_load_imbalance=self.simulation.max_load_imbalance
         )
 

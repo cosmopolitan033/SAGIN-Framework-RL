@@ -23,6 +23,15 @@ from src.core.types import Position
 from src.visualization.real_time_visualizer import RealTimeNetworkVisualizer
 from config.grid_config import get_sagin_config, list_available_configs, print_config_summary
 
+# RL Integration
+try:
+    from src.rl.rl_integration import RLModelManager, EnhancedSAGINRLEnvironment
+    from src.rl.trainers import HierarchicalRLTrainer
+    RL_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: RL components not available: {e}")
+    RL_AVAILABLE = False
+
 
 class SAGINDemo:
     """SAGIN demonstration using comprehensive configuration system."""
@@ -31,6 +40,14 @@ class SAGINDemo:
         self.network = None
         self.metrics_history = []
         self.current_config = None
+        self.orchestration_mode = "heuristic"  # "heuristic" or "rl"
+        self.selected_rl_model = None
+        
+        # Initialize RL manager if available
+        if RL_AVAILABLE:
+            self.rl_manager = RLModelManager()
+        else:
+            self.rl_manager = None
     
     def create_network(self, config_name: str = "medium_demo") -> SAGINNetwork:
         """Create a SAGIN network using a predefined configuration."""
@@ -110,6 +127,239 @@ class SAGINDemo:
         self.network = network
         return network
     
+    def select_orchestration_mode(self) -> bool:
+        """Interactive selection of orchestration mode.
+        
+        Returns:
+            True if user wants to proceed, False to cancel
+        """
+        if not RL_AVAILABLE:
+            print("⚠️  RL components not available, using heuristic mode")
+            self.orchestration_mode = "heuristic"
+            return True
+        
+        print("\n🧠 Select Orchestration Mode:")
+        print("=" * 40)
+        print("1. 🔧 Heuristic (Original Algorithm)")
+        print("2. 🤖 Reinforcement Learning")
+        print("3. 🚀 Train New RL Model")
+        print("0. ❌ Cancel")
+        
+        while True:
+            try:
+                choice = input("\nEnter choice (0-3): ").strip()
+                
+                if choice == '1':
+                    self.orchestration_mode = "heuristic"
+                    print("✅ Selected: Heuristic orchestration")
+                    return True
+                    
+                elif choice == '2':
+                    if self.rl_manager:
+                        selected_model = self.rl_manager.interactive_model_selection()
+                        if selected_model is None:
+                            continue  # User cancelled model selection
+                        elif selected_model == "heuristic":
+                            self.orchestration_mode = "heuristic"
+                            print("✅ Selected: Heuristic orchestration")
+                        else:
+                            self.orchestration_mode = "rl"
+                            self.selected_rl_model = selected_model
+                            print(f"✅ Selected: RL orchestration with model '{selected_model}'")
+                        return True
+                    else:
+                        print("❌ RL manager not available")
+                        continue
+                        
+                elif choice == '3':
+                    success = self._train_new_rl_model()
+                    if success:
+                        return self.select_orchestration_mode()  # Re-select after training
+                    else:
+                        continue
+                        
+                elif choice == '0':
+                    print("❌ Cancelled")
+                    return False
+                    
+                else:
+                    print("❌ Invalid choice. Please enter 0-3")
+                    
+            except (ValueError, KeyboardInterrupt):
+                print("❌ Invalid input or interrupted")
+                return False
+    
+    def _train_new_rl_model(self) -> bool:
+        """Train a new RL model interactively.
+        
+        Returns:
+            True if training successful, False otherwise
+        """
+        if not RL_AVAILABLE:
+            print("❌ RL components not available for training")
+            return False
+        
+        print("\n🚀 Train New RL Model")
+        print("=" * 30)
+        
+        try:
+            # Get model name
+            model_name = input("Enter model name: ").strip()
+            if not model_name:
+                print("❌ Model name cannot be empty")
+                return False
+            
+            # Get training configuration
+            print("\nTraining Configuration:")
+            try:
+                episodes = int(input("Number of training episodes (default: 500): ").strip() or "500")
+                config_name = input("Base configuration (default: medium_demo): ").strip() or "medium_demo"
+                description = input("Model description: ").strip() or f"RL model trained on {config_name}"
+            except ValueError:
+                print("❌ Invalid input")
+                return False
+            
+            print(f"\n🔧 Starting training of '{model_name}' for {episodes} episodes...")
+            print("⚠️  Training may take several minutes. Please wait...")
+            
+            # Create training environment
+            config = get_sagin_config(config_name)
+            network = self.create_network(config_name)
+            
+            # Setup RL environment with both network and config
+            rl_config = {
+                'load_imbalance_weight': 0.5,
+                'energy_penalty_weight': 1.0,
+                'min_energy_threshold': 0.2,
+                'central_action_interval': 5
+            }
+            
+            # Create trainer config with training parameters
+            trainer_config = {
+                'env_config': rl_config,
+                'num_episodes': episodes,
+                'central_update_frequency': 5,
+                'results_dir': "models/rl"
+            }
+            
+            # Create trainer
+            trainer = HierarchicalRLTrainer(network, trainer_config)
+            
+            # Train the model
+            print("🏃 Training in progress...")
+            start_time = time.time()
+            
+            central_agent, local_agents, training_stats = trainer.train()
+            
+            training_time = time.time() - start_time
+            print(f"✅ Training completed in {training_time:.1f} seconds")
+            
+            # Save the model
+            model_info = {
+                'description': description,
+                'config': config_name,
+                'episodes': episodes,
+                'training_time': training_time,
+                'performance': {
+                    'final_reward': training_stats.get('final_reward', 0.0),
+                    'success_rate': training_stats.get('success_rate', 0.0),
+                    'avg_latency': training_stats.get('avg_latency', 0.0)
+                }
+            }
+            
+            self.rl_manager.save_model(model_name, central_agent, local_agents, model_info)
+            print(f"💾 Model '{model_name}' saved successfully")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Training failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def manage_rl_models(self):
+        """RL model management interface."""
+        if not RL_AVAILABLE or not self.rl_manager:
+            print("❌ RL components not available")
+            return
+        
+        while True:
+            print("\n🤖 RL Model Management")
+            print("=" * 40)
+            print("1. 📋 List available RL models")
+            print("2. 🚀 Train new RL model")
+            print("3. ⚙️  Evaluate RL model")
+            print("0. ⬅️  Back to main menu")
+            
+            choice = input("\nEnter choice (0-3): ").strip()
+            
+            if choice == '1':
+                models = self.rl_manager.list_models()
+                if not models:
+                    print("❌ No trained models available")
+                    continue
+                    
+                print("\n📋 Available RL Models:")
+                print("=" * 60)
+                for i, model in enumerate(models, 1):
+                    print(f"{i:2d}. {model['name']}")
+                    print(f"     Description: {model['description']}")
+                    print(f"     Trained: {model['timestamp'][:19]}")
+                    if 'success_rate' in model['performance']:
+                        print(f"     Success Rate: {model['performance']['success_rate']:.2%}")
+                    if 'avg_latency' in model['performance']:
+                        print(f"     Avg Latency: {model['performance']['avg_latency']:.3f}s")
+                    print()
+            
+            elif choice == '2':
+                self._train_new_rl_model()
+                
+            elif choice == '3':
+                # Model evaluation
+                model_name = self.rl_manager.interactive_model_selection()
+                if model_name is None or model_name == "heuristic":
+                    continue
+                    
+                # Get config for evaluation
+                print("\nSelect configuration for evaluation:")
+                configs = list_available_configs()
+                for i, config in enumerate(configs, 1):
+                    print(f"  {i}. {config}")
+                
+                selection = input("\nEnter configuration name or number: ").strip()
+                try:
+                    if selection.isdigit():
+                        config_idx = int(selection) - 1
+                        if 0 <= config_idx < len(configs):
+                            config_name = configs[config_idx]
+                        else:
+                            print("❌ Invalid selection")
+                            continue
+                    else:
+                        config_name = selection
+                    
+                    # Run evaluation
+                    print(f"🔍 Evaluating model '{model_name}' on {config_name}...")
+                    self.orchestration_mode = "rl"
+                    self.selected_rl_model = model_name
+                    network = self.run_simulation(config_name)
+                    self.print_summary(network)
+                    
+                    # Option to plot results
+                    if input("\nShow plots? (y/n): ").lower().startswith('y'):
+                        self.plot_results(network)
+                        
+                except (ValueError, IndexError):
+                    print("❌ Invalid selection")
+                    continue
+                
+            elif choice == '0':
+                return
+                
+            else:
+                print("❌ Invalid choice. Please enter 0-3")
+    
     def run_simulation(self, config_name: str = "medium_demo"):
         """Run simulation using the specified configuration."""
         print(f"🚀 SAGIN SIMULATION: {config_name.upper()}")
@@ -118,6 +368,20 @@ class SAGINDemo:
         # Create network with configuration
         network = self.create_network(config_name)
         config = self.current_config
+        
+        # Set orchestration mode on the network
+        if self.orchestration_mode == "rl" and self.selected_rl_model and self.rl_manager:
+            try:
+                central_agent, local_agents = self.rl_manager.load_model(self.selected_rl_model, network)
+                network.set_rl_orchestration(central_agent, local_agents)
+                print(f"🤖 Using RL orchestration with model: {self.selected_rl_model}")
+            except Exception as e:
+                print(f"❌ Failed to load RL model '{self.selected_rl_model}': {e}")
+                print("🔧 Falling back to heuristic orchestration")
+                network.set_heuristic_orchestration()
+        else:
+            network.set_heuristic_orchestration()
+            print("🔧 Using heuristic orchestration")
         
         # Configure logging based on config
         if config.simulation.logging_level in ["medium", "high"]:
@@ -307,11 +571,14 @@ def main():
         print("3. 🚀 Run simulation with configuration")
         print("4. 🧪 Quick test (small_test config)")
         print("5. 📡 Real-time visualization")
+        if RL_AVAILABLE:
+            print("6. 🤖 RL Management (train/view models)")
         print("0. ❌ Exit")
         print("=" * 60)
         
         try:
-            choice = input("\nEnter choice (0-5): ").strip()
+            max_choice = "6" if RL_AVAILABLE else "5"
+            choice = input(f"\nEnter choice (0-{max_choice}): ").strip()
             
             if choice == '1':
                 print_config_summary()
@@ -321,6 +588,10 @@ def main():
                 print_config_summary(config_name)
                 
             elif choice == '3':
+                # Select orchestration mode first
+                if not demo.select_orchestration_mode():
+                    continue  # User cancelled orchestration selection
+                
                 print("\nAvailable configurations:")
                 configs = list_available_configs()
                 for i, config in enumerate(configs, 1):
@@ -346,6 +617,10 @@ def main():
                     continue
                 
             elif choice == '4':
+                # Select orchestration mode first
+                if not demo.select_orchestration_mode():
+                    continue  # User cancelled orchestration selection
+                    
                 network = demo.run_simulation("small_test")
                 demo.print_summary(network)
                 
@@ -394,6 +669,9 @@ def main():
                 except (ValueError, IndexError):
                     print("Invalid selection")
                     continue
+                    
+            elif choice == '6' and RL_AVAILABLE:
+                demo.manage_rl_models()
                 
             elif choice == '0':
                 print("Goodbye! 👋")

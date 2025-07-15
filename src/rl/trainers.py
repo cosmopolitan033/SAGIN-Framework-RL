@@ -265,6 +265,18 @@ class HierarchicalRLTrainer:
         if verbose:
             print(f"Training completed in {time.time() - start_time:.1f} seconds")
             print(f"Final average reward: {np.mean(self.rewards_history[-100:]):.2f}")
+        
+        # Return the trained agents and training statistics
+        training_stats = {
+            'rewards_history': self.rewards_history,
+            'central_losses': self.central_losses,
+            'local_losses': self.local_losses,
+            'final_average_reward': np.mean(self.rewards_history[-100:]) if self.rewards_history else 0.0,
+            'total_episodes': self.num_episodes,
+            'training_time': time.time() - start_time
+        }
+        
+        return self.central_agent, self.local_agents, training_stats
     
     def save_checkpoints(self, episode: int, final: bool = False):
         """

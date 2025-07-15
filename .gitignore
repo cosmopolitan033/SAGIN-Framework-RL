@@ -239,6 +239,20 @@ config/local/
 *.hdf5
 *.npz
 
+# RL model files and training artifacts
+models/rl/
+*.pth
+*.pt
+*.model
+*.weights
+*.ckpt
+*.checkpoint
+model_registry.json
+*losses*.png
+*rewards*.png
+checkpoint_*/
+final_model/
+
 # Ignore duplicate files that might exist
 *_old.*
 *_backup.*

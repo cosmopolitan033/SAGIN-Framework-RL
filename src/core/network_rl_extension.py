@@ -98,28 +98,30 @@ def get_task_offloading_decision_rl(self, task, static_uav_id: int, region_id: i
         'task_urgency': max(0.0, 1.0 - (task.deadline - self.current_time) / 10.0)  # Normalized
     }
     
-    # Convert to numpy array for the agent
-    state_array = np.array([
-        state['queue_length'],
-        state['residual_energy'],
-        state['dynamic_uavs'],
-        state['task_intensity'],
-        state['task_size'],
-        state['task_cycles'],
-        state['task_urgency']
-    ], dtype=np.float32)
-    
     # Get action from agent
     local_agent = self.local_agents[region_id]
-    action = local_agent.select_action(state_array)
     
-    # Convert action index to task decision
-    if action == 0:
+    # Create task info dictionary for the agent
+    task_info = {
+        'data_size': task.data_size_in,
+        'cpu_cycles': task.cpu_cycles,
+        'deadline': task.deadline,
+        'priority': getattr(task, 'priority', 1.0)
+    }
+    
+    # Use state dictionary instead of array
+    action = local_agent.select_action(state, task_info, explore=False)
+    
+    # Convert action string to task decision
+    if action == 'local':
         return TaskDecision.LOCAL
-    elif action == 1:
+    elif action == 'dynamic':
         return TaskDecision.DYNAMIC
-    else:
+    elif action == 'satellite':
         return TaskDecision.SATELLITE
+    else:
+        # Default fallback
+        return TaskDecision.LOCAL
 
 
 def _process_task_offloading_rl(self, verbose: bool = True) -> Dict[str, int]:
@@ -193,42 +195,88 @@ def _allocate_dynamic_uavs_with_rl(self) -> None:
     if not self.central_agent:
         return
     
-    # Get global state for central agent
-    global_state = self._get_global_state_for_rl()
+    # Get available dynamic UAVs
+    available_uavs = [uav_id for uav_id, uav in self.uav_manager.dynamic_uavs.items() 
+                     if uav.is_available]
     
-    # Convert to numpy array
-    state_array = np.array(global_state, dtype=np.float32)
+    if not available_uavs:
+        return  # No UAVs to allocate
     
-    # Get action from central agent
-    actions = self.central_agent.select_action(state_array)
+    # Get region IDs
+    region_ids = list(self.regions.keys())
     
-    # Apply actions: allocate dynamic UAVs to regions
-    dynamic_uavs = list(self.uav_manager.dynamic_uavs.values())
-    num_regions = len(self.regions)
+    # Build state dictionary in the format expected by CentralAgent
+    # The model was trained with fixed sizes: 16 regions, 5 dynamic UAVs
+    EXPECTED_REGIONS = 16
+    EXPECTED_DYNAMIC_UAVS = 5
     
-    for i, uav in enumerate(dynamic_uavs):
-        # Skip if action index is out of bounds
-        if i >= len(actions):
-            continue
+    # Pad or truncate regions to match expected size
+    all_region_ids = list(range(1, EXPECTED_REGIONS + 1))
+    
+    state_dict = {
+        'regions': {rid: {'id': rid} for rid in all_region_ids},
+        'task_arrival_rates': {},
+        'static_uav_queues': {},
+        'static_uav_energy': {},
+        'dynamic_uav_positions': {},
+        'dynamic_uav_availability': {},
+        'current_epoch': self.epoch_count
+    }
+    
+    # Fill actual region data, pad missing regions with zeros
+    for rid in all_region_ids:
+        if rid in self.regions:
+            state_dict['task_arrival_rates'][rid] = self._get_region_task_rate(rid)
+            state_dict['static_uav_queues'][rid] = self._get_static_uav_queue(rid)
+            state_dict['static_uav_energy'][rid] = self._get_static_uav_energy(rid)
+        else:
+            state_dict['task_arrival_rates'][rid] = 0.0
+            state_dict['static_uav_queues'][rid] = 0.0
+            state_dict['static_uav_energy'][rid] = 0.0
+    
+    # Pad or truncate UAVs to match expected size
+    padded_uav_ids = list(range(1, EXPECTED_DYNAMIC_UAVS + 1))
+    actual_uavs = available_uavs[:EXPECTED_DYNAMIC_UAVS]  # Take first N available
+    
+    for i, uav_id in enumerate(padded_uav_ids):
+        if i < len(actual_uavs):
+            real_uav_id = actual_uavs[i]
+            state_dict['dynamic_uav_positions'][uav_id] = (
+                self.uav_manager.dynamic_uavs[real_uav_id].position.x,
+                self.uav_manager.dynamic_uavs[real_uav_id].position.y,
+                self.uav_manager.dynamic_uavs[real_uav_id].position.z
+            )
+            state_dict['dynamic_uav_availability'][uav_id] = 1.0
+        else:
+            # Pad with dummy UAV at origin
+            state_dict['dynamic_uav_positions'][uav_id] = (0.0, 0.0, 0.0)
+            state_dict['dynamic_uav_availability'][uav_id] = 0.0
+    
+    # Get action from central agent - use the fixed expected region/UAV lists
+    actions = self.central_agent.select_action(state_dict, padded_uav_ids, all_region_ids, explore=False)
+    
+    # Apply actions: map from padded UAV IDs back to real UAV IDs
+    for padded_uav_id, target_region_id in actions.items():
+        # Find the real UAV corresponding to this padded ID
+        if padded_uav_id <= len(actual_uavs):
+            real_uav_id = actual_uavs[padded_uav_id - 1]  # Convert 1-based to 0-based index
             
-        # Get target region from action
-        target_region = int(actions[i]) + 1  # +1 because regions are 1-indexed
-        
-        # Validate region ID
-        if target_region not in self.regions:
-            target_region = 1  # Default to first region if invalid
-        
-        # Skip if already in this region
-        if uav.assigned_region_id == target_region:
-            continue
+            if real_uav_id not in self.uav_manager.dynamic_uavs:
+                continue
+                
+            uav = self.uav_manager.dynamic_uavs[real_uav_id]
             
-        # Assign to new region
-        uav.assigned_region_id = target_region
-        region = self.regions[target_region]
-        
-        # Move towards region center
-        uav.set_target_position(region.center)
-        uav.status = UAVStatus.MOVING
+            # Validate region ID (only apply to regions that actually exist)
+            if target_region_id not in self.regions:
+                continue  # Skip invalid region assignment
+            
+            # Skip if already in this region
+            if uav.assigned_region_id == target_region_id:
+                continue
+                
+            # Assign to new region using the proper method
+            region = self.regions[target_region_id]
+            uav.assign_to_region(target_region_id, region.center, self.current_time)
 
 
 def _get_global_state_for_rl(self) -> list:
@@ -275,6 +323,76 @@ def _get_global_state_for_rl(self) -> list:
     return state_features
 
 
+def _get_region_load(self, region_id: int) -> float:
+    """Calculate normalized load for a specific region."""
+    if region_id not in self.regions:
+        return 0.0
+    
+    # Get pending tasks for this region
+    pending_tasks = len(self.task_manager.get_tasks_for_region(region_id, max_tasks=100))
+    
+    # Get vehicle count (task generators)
+    vehicle_count = len(self.vehicle_manager.get_vehicles_in_region(region_id))
+    
+    # Get static UAV load
+    static_uav = self.uav_manager.get_static_uav_by_region(region_id)
+    static_load = 0.0
+    if static_uav:
+        static_load = static_uav.total_workload / static_uav.cpu_capacity
+    
+    # Calculate combined load metric
+    task_density = pending_tasks / max(1, vehicle_count)  # tasks per vehicle
+    combined_load = (task_density * 0.3) + (static_load * 0.7)  # weighted combination
+    
+    return min(1.0, combined_load)  # normalize to [0,1]
+
+
+def _get_region_task_rate(self, region_id: int) -> float:
+    """Get task arrival rate for a region."""
+    if region_id not in self.regions:
+        return 0.0
+    
+    # Get recent task generation rate (tasks per second)
+    # This is a simplified metric based on pending tasks
+    pending_tasks = len(self.task_manager.get_tasks_for_region(region_id, max_tasks=50))
+    vehicle_count = len(self.vehicle_manager.get_vehicles_in_region(region_id))
+    
+    # Estimate task rate based on current activity
+    base_rate = self.regions[region_id].base_intensity
+    activity_multiplier = max(0.1, vehicle_count / 10.0)  # More vehicles = more tasks
+    
+    rate = base_rate * activity_multiplier
+    return max(0.0, min(10.0, rate))  # Clamp to reasonable range [0, 10]
+
+
+def _get_static_uav_queue(self, region_id: int) -> float:
+    """Get static UAV queue length for a region."""
+    static_uav = self.uav_manager.get_static_uav_by_region(region_id)
+    if not static_uav:
+        return 0.0
+    
+    queue_len = float(static_uav.queue_length)
+    return max(0.0, min(100.0, queue_len))  # Clamp to reasonable range [0, 100]
+
+
+def _get_static_uav_energy(self, region_id: int) -> float:
+    """Get static UAV energy level for a region."""
+    static_uav = self.uav_manager.get_static_uav_by_region(region_id)
+    if not static_uav:
+        return 1.0  # Default to full energy if no UAV
+    
+    # Check for valid energy values and return energy percentage (0.0 to 1.0)
+    if (hasattr(static_uav, 'battery_capacity') and 
+        hasattr(static_uav, 'current_energy') and 
+        static_uav.battery_capacity > 0 and 
+        not np.isnan(static_uav.current_energy) and 
+        not np.isnan(static_uav.battery_capacity)):
+        energy_ratio = static_uav.current_energy / static_uav.battery_capacity
+        return max(0.0, min(1.0, energy_ratio))  # Clamp to [0,1]
+    else:
+        return 1.0  # Default to full energy if values are invalid
+
+
 # Add methods to SAGINNetwork class
 SAGINNetwork.set_heuristic_orchestration = set_heuristic_orchestration
 SAGINNetwork.set_rl_orchestration = set_rl_orchestration
@@ -282,3 +400,7 @@ SAGINNetwork.get_task_offloading_decision_rl = get_task_offloading_decision_rl
 SAGINNetwork._process_task_offloading_rl = _process_task_offloading_rl
 SAGINNetwork._allocate_dynamic_uavs_with_rl = _allocate_dynamic_uavs_with_rl
 SAGINNetwork._get_global_state_for_rl = _get_global_state_for_rl
+SAGINNetwork._get_region_load = _get_region_load
+SAGINNetwork._get_region_task_rate = _get_region_task_rate
+SAGINNetwork._get_static_uav_queue = _get_static_uav_queue
+SAGINNetwork._get_static_uav_energy = _get_static_uav_energy

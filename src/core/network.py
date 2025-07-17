@@ -165,6 +165,11 @@ class SAGINNetwork:
                                                grid_config.region_intensity_variance)
                 self.regions[created_region_id].base_intensity = max(0.1, base_intensity)
         
+        # Apply task type proportions if specified in task_config
+        if task_config is not None and task_config.task_type_proportions is not None:
+            print(f"  - Applying task type proportions from configuration")
+            self.set_task_type_proportions(task_config.task_type_proportions)
+        
         print(f"Created {grid_config.grid_rows}x{grid_config.grid_cols} grid topology:")
         print(f"  - Total regions: {grid_config.total_regions}")
         print(f"  - Area: {grid_config.area_bounds[1]/1000:.1f}km x {grid_config.area_bounds[3]/1000:.1f}km")
@@ -1520,3 +1525,57 @@ class SAGINNetwork:
         
         if verbose and repositioned == 0:
             print(f"    ℹ️  No UAVs needed repositioning")
+    
+    def set_task_type_proportions(self, proportions: Dict[str, float]):
+        """Set task type proportions for task generation.
+        
+        Args:
+            proportions: Dictionary mapping task type names to proportions.
+                        Valid keys: 'normal', 'computation_intensive', 'data_intensive', 'latency_sensitive'
+                        Values must sum to 1.0
+        """
+        from .tasks import TaskType
+        
+        # Convert string keys to TaskType enum
+        task_type_map = {
+            'normal': TaskType.NORMAL,
+            'computation_intensive': TaskType.COMPUTATION_INTENSIVE,
+            'data_intensive': TaskType.DATA_INTENSIVE,
+            'latency_sensitive': TaskType.LATENCY_SENSITIVE
+        }
+        
+        # Convert string keys to TaskType enums
+        enum_proportions = {}
+        for key, value in proportions.items():
+            if key not in task_type_map:
+                raise ValueError(f"Invalid task type '{key}'. Valid types: {list(task_type_map.keys())}")
+            enum_proportions[task_type_map[key]] = value
+        
+        # Set proportions in task manager
+        self.task_manager.set_task_type_proportions(enum_proportions)
+        
+        print(f"✅ Task type proportions updated:")
+        for key, value in proportions.items():
+            print(f"  - {key.replace('_', ' ').title()}: {value:.1%}")
+    
+    def get_task_type_proportions(self) -> Dict[str, float]:
+        """Get current task type proportions.
+        
+        Returns:
+            Dictionary mapping task type names to proportions
+        """
+        from .tasks import TaskType
+        
+        # Get proportions from task manager
+        enum_proportions = self.task_manager.get_task_type_proportions()
+        
+        # Convert TaskType enums to strings
+        task_type_names = {
+            TaskType.NORMAL: 'normal',
+            TaskType.COMPUTATION_INTENSIVE: 'computation_intensive',
+            TaskType.DATA_INTENSIVE: 'data_intensive',
+            TaskType.LATENCY_SENSITIVE: 'latency_sensitive'
+        }
+        
+        return {task_type_names[task_type]: proportion 
+                for task_type, proportion in enum_proportions.items()}

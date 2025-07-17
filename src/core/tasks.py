@@ -73,10 +73,25 @@ DEFAULT_TASK_CHARACTERISTICS = {
 class TaskGenerator:
     """Generates tasks based on spatio-temporal patterns."""
     
-    def __init__(self, system_params: SystemParameters):
+    def __init__(self, system_params: SystemParameters, task_type_proportions: Optional[Dict[TaskType, float]] = None):
         self.system_params = system_params
         self.task_characteristics = DEFAULT_TASK_CHARACTERISTICS.copy()
         self.next_task_id = 1
+        
+        # Set task type proportions (defaults if not provided)
+        if task_type_proportions is None:
+            self.task_type_proportions = {
+                TaskType.NORMAL: 0.6,
+                TaskType.COMPUTATION_INTENSIVE: 0.2,
+                TaskType.DATA_INTENSIVE: 0.15,
+                TaskType.LATENCY_SENSITIVE: 0.05
+            }
+        else:
+            # Validate proportions sum to 1.0
+            total = sum(task_type_proportions.values())
+            if abs(total - 1.0) > 0.001:
+                raise ValueError(f"Task type proportions must sum to 1.0, got {total}")
+            self.task_type_proportions = task_type_proportions.copy()
         
         # Task generation history
         self.generation_history: List[Tuple[float, int, int]] = []  # (time, region_id, count)
@@ -93,6 +108,18 @@ class TaskGenerator:
     def set_task_characteristics(self, task_type: TaskType, characteristics: TaskCharacteristics):
         """Set custom task characteristics for a task type."""
         self.task_characteristics[task_type] = characteristics
+    
+    def set_task_type_proportions(self, proportions: Dict[TaskType, float]):
+        """Set custom task type proportions."""
+        # Validate proportions sum to 1.0
+        total = sum(proportions.values())
+        if abs(total - 1.0) > 0.001:
+            raise ValueError(f"Task type proportions must sum to 1.0, got {total}")
+        self.task_type_proportions = proportions.copy()
+    
+    def get_task_type_proportions(self) -> Dict[TaskType, float]:
+        """Get current task type proportions."""
+        return self.task_type_proportions.copy()
     
     def add_burst_event(self, region_id: int, start_time: float, duration: float, 
                        amplitude: float):
@@ -205,19 +232,11 @@ class TaskGenerator:
         return tasks
     
     def _select_task_type(self) -> TaskType:
-        """Select task type based on predefined probabilities."""
-        # Task type probabilities
-        probabilities = {
-            TaskType.NORMAL: 0.6,
-            TaskType.COMPUTATION_INTENSIVE: 0.2,
-            TaskType.DATA_INTENSIVE: 0.15,
-            TaskType.LATENCY_SENSITIVE: 0.05
-        }
-        
+        """Select task type based on configured proportions."""
         rand = np.random.random()
         cumulative = 0.0
         
-        for task_type, prob in probabilities.items():
+        for task_type, prob in self.task_type_proportions.items():
             cumulative += prob
             if rand <= cumulative:
                 return task_type
@@ -312,9 +331,9 @@ class TaskQueue:
 class TaskManager:
     """Central task management system."""
     
-    def __init__(self, system_params: SystemParameters):
+    def __init__(self, system_params: SystemParameters, task_type_proportions: Optional[Dict[TaskType, float]] = None):
         self.system_params = system_params
-        self.task_generator = TaskGenerator(system_params)
+        self.task_generator = TaskGenerator(system_params, task_type_proportions)
         
         # Task tracking
         self.all_tasks: Dict[int, Task] = {}
@@ -474,6 +493,14 @@ class TaskManager:
                        duration: float, amplitude: float):
         """Add a burst event for increased task generation."""
         self.task_generator.add_burst_event(region_id, start_time, duration, amplitude)
+    
+    def set_task_type_proportions(self, proportions: Dict[TaskType, float]):
+        """Set task type proportions for task generation."""
+        self.task_generator.set_task_type_proportions(proportions)
+    
+    def get_task_type_proportions(self) -> Dict[TaskType, float]:
+        """Get current task type proportions."""
+        return self.task_generator.get_task_type_proportions()
     
     def get_recent_tasks(self, max_tasks: int = 10) -> List[Task]:
         """Get recent completed tasks for analysis."""

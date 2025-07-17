@@ -127,6 +127,121 @@ class SAGINDemo:
         self.network = network
         return network
     
+    def configure_task_proportions(self, network: SAGINNetwork) -> bool:
+        """Interactive configuration of task type proportions.
+        
+        Args:
+            network: The SAGIN network to configure
+            
+        Returns:
+            True if user configured proportions, False if using defaults
+        """
+        print("\n🎯 Task Type Proportion Configuration")
+        print("=" * 50)
+        
+        # Show current proportions
+        current_proportions = network.get_task_type_proportions()
+        print("Current task type proportions:")
+        for task_type, proportion in current_proportions.items():
+            print(f"  - {task_type.replace('_', ' ').title()}: {proportion:.1%}")
+        
+        print("\nOptions:")
+        print("1. 🏭 High Computation (60% computation-intensive, 20% normal, 15% data, 5% latency)")
+        print("2. 📊 Data Heavy (50% data-intensive, 30% normal, 10% computation, 10% latency)")
+        print("3. ⚡ Real-time Critical (40% latency-sensitive, 30% normal, 20% computation, 10% data)")
+        print("4. ⚖️  Balanced Mix (25% each type)")
+        print("5. 🎛️  Custom proportions")
+        print("6. ✅ Keep current proportions")
+        
+        while True:
+            choice = input("\nSelect task proportion scenario (1-6): ").strip()
+            
+            if choice == '1':
+                proportions = {
+                    'normal': 0.2,
+                    'computation_intensive': 0.6,
+                    'data_intensive': 0.15,
+                    'latency_sensitive': 0.05
+                }
+                network.set_task_type_proportions(proportions)
+                print("✅ High Computation scenario applied")
+                return True
+                
+            elif choice == '2':
+                proportions = {
+                    'normal': 0.3,
+                    'computation_intensive': 0.1,
+                    'data_intensive': 0.5,
+                    'latency_sensitive': 0.1
+                }
+                network.set_task_type_proportions(proportions)
+                print("✅ Data Heavy scenario applied")
+                return True
+                
+            elif choice == '3':
+                proportions = {
+                    'normal': 0.3,
+                    'computation_intensive': 0.2,
+                    'data_intensive': 0.1,
+                    'latency_sensitive': 0.4
+                }
+                network.set_task_type_proportions(proportions)
+                print("✅ Real-time Critical scenario applied")
+                return True
+                
+            elif choice == '4':
+                proportions = {
+                    'normal': 0.25,
+                    'computation_intensive': 0.25,
+                    'data_intensive': 0.25,
+                    'latency_sensitive': 0.25
+                }
+                network.set_task_type_proportions(proportions)
+                print("✅ Balanced Mix scenario applied")
+                return True
+                
+            elif choice == '5':
+                return self._configure_custom_proportions(network)
+                
+            elif choice == '6':
+                print("✅ Keeping current task proportions")
+                return False
+                
+            else:
+                print("❌ Invalid choice. Please enter 1-6.")
+    
+    def _configure_custom_proportions(self, network: SAGINNetwork) -> bool:
+        """Configure custom task type proportions."""
+        print("\n🎛️  Custom Task Type Proportions")
+        print("Enter proportions (as decimals, must sum to 1.0):")
+        
+        try:
+            normal = float(input("Normal tasks (current: 60%): ") or "0.6")
+            computation = float(input("Computation-intensive tasks (current: 20%): ") or "0.2")
+            data = float(input("Data-intensive tasks (current: 15%): ") or "0.15")
+            latency = float(input("Latency-sensitive tasks (current: 5%): ") or "0.05")
+            
+            # Validate proportions
+            total = normal + computation + data + latency
+            if abs(total - 1.0) > 0.001:
+                print(f"❌ Error: Proportions sum to {total:.3f}, must sum to 1.0")
+                return False
+            
+            proportions = {
+                'normal': normal,
+                'computation_intensive': computation,
+                'data_intensive': data,
+                'latency_sensitive': latency
+            }
+            
+            network.set_task_type_proportions(proportions)
+            print("✅ Custom proportions applied")
+            return True
+            
+        except ValueError:
+            print("❌ Invalid input. Please enter valid decimal numbers.")
+            return False
+    
     def select_orchestration_mode(self) -> bool:
         """Interactive selection of orchestration mode.
         
@@ -463,6 +578,21 @@ class SAGINDemo:
         print(f"  Total Failed: {metrics.total_tasks_failed}")
         print(f"  Success Rate: {metrics.success_rate:.3f}")
         print(f"  Average Latency: {metrics.average_latency:.3f} seconds")
+        
+        # Show task type distribution
+        task_stats = network.task_manager.task_generator.get_generation_statistics()
+        total_generated = task_stats['total_generated']
+        if total_generated > 0:
+            print(f"  Task Type Distribution:")
+            for task_type, count in task_stats['by_type'].items():
+                percentage = (count / total_generated) * 100
+                print(f"    - {task_type.value.replace('_', ' ').title()}: {count} ({percentage:.1f}%)")
+        
+        # Show configured proportions
+        current_proportions = network.get_task_type_proportions()
+        print(f"  Configured Task Proportions:")
+        for task_type, proportion in current_proportions.items():
+            print(f"    - {task_type.replace('_', ' ').title()}: {proportion:.1%}")
         print()
         
         print("Resource Utilization:")

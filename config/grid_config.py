@@ -139,6 +139,9 @@ class TaskConfig:
     deadline_mean: float = 8.0  # seconds
     deadline_std: float = 2.0
     
+    # Task type proportions
+    task_type_proportions: Dict[str, float] = None  # e.g., {'normal': 0.6, 'computation_intensive': 0.2, 'data_intensive': 0.15, 'latency_sensitive': 0.05}
+    
     # Burst events
     burst_events: List[Tuple[int, float, float, float]] = None  # (region_id, start_time, duration, amplitude)
 
@@ -236,6 +239,7 @@ SAGIN_CONFIGS = {
         ),
         tasks=TaskConfig(
             base_task_rate=0.5,
+            task_type_proportions={'normal': 0.6, 'computation_intensive': 0.2, 'data_intensive': 0.15, 'latency_sensitive': 0.05},
             burst_events=[(1, 10.0, 5.0, 2.0)]
         ),
         simulation=SimulationConfig(
@@ -264,6 +268,7 @@ SAGIN_CONFIGS = {
         ),
         tasks=TaskConfig(
             base_task_rate=1.0,
+            task_type_proportions={'normal': 0.4, 'computation_intensive': 0.4, 'data_intensive': 0.15, 'latency_sensitive': 0.05},
             burst_events=[(2, 30.0, 20.0, 2.0), (3, 60.0, 15.0, 1.8)]
         ),
         simulation=SimulationConfig(
@@ -291,7 +296,8 @@ SAGIN_CONFIGS = {
             num_satellites=12
         ),
         tasks=TaskConfig(
-            base_task_rate=1.5,
+            base_task_rate=50,
+            task_type_proportions={'normal': 0.1, 'computation_intensive': 0.1, 'data_intensive': 0.1, 'latency_sensitive': 0.7},
             burst_events=[(5, 100.0, 50.0, 3.0), (10, 200.0, 30.0, 2.5), (15, 350.0, 40.0, 2.0)]
         ),
         simulation=SimulationConfig(
@@ -321,6 +327,7 @@ SAGIN_CONFIGS = {
         ),
         tasks=TaskConfig(
             base_task_rate=2.0,
+            task_type_proportions={'normal': 0.3, 'computation_intensive': 0.2, 'data_intensive': 0.1, 'latency_sensitive': 0.4},
             burst_events=[(5, 50.0, 20.0, 3.0), (15, 150.0, 25.0, 2.5)]
         ),
         simulation=SimulationConfig(
@@ -352,6 +359,7 @@ SAGIN_CONFIGS = {
             base_task_rate=2.5,
             cpu_cycles_mean=2e9,
             data_size_in_mean=2.0,
+            task_type_proportions={'normal': 0.3, 'computation_intensive': 0.1, 'data_intensive': 0.5, 'latency_sensitive': 0.1},
             burst_events=[(10, 100.0, 60.0, 4.0), (20, 200.0, 40.0, 3.0), (30, 300.0, 50.0, 3.5)]
         ),
         simulation=SimulationConfig(

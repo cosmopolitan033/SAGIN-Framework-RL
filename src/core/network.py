@@ -113,7 +113,7 @@ class SAGINNetwork:
         
         return region_id
     
-    def setup_network_topology(self, grid_config=None, area_bounds=None, num_regions=None, task_config=None) -> None:
+    def setup_network_topology(self, grid_config=None, area_bounds=None, num_regions=None, task_config=None, satellite_config=None) -> None:
         """Setup network topology with regions using grid configuration."""
         # Handle backward compatibility
         if grid_config is None:
@@ -139,6 +139,25 @@ class SAGINNetwork:
         
         # Store grid configuration for visualization and other uses
         self.grid = grid_config
+        
+        # Recreate satellite constellation with additional processing delay if configured
+        if satellite_config is not None and hasattr(satellite_config, 'additional_processing_delay'):
+            additional_delay = satellite_config.additional_processing_delay
+            if additional_delay > 0:
+                print(f"  - Configuring satellite processing delay: {additional_delay} seconds")
+                # Re-initialize satellite constellation with the additional delay
+                from .satellites import SatelliteConstellation
+                self.satellite_constellation = SatelliteConstellation(
+                    self.system_params, 
+                    additional_processing_delay=additional_delay
+                )
+                
+                # Create the actual satellites in the constellation
+                num_satellites = satellite_config.num_satellites
+                satellite_ids = self.satellite_constellation.create_constellation(
+                    num_satellites, num_planes=1  # Single orbital plane for simplified model
+                )
+                print(f"  - Created {len(satellite_ids)} satellites with {additional_delay}s processing delay")
         
         # Create regions in grid pattern
         for row in range(grid_config.grid_rows):
@@ -556,7 +575,7 @@ class SAGINNetwork:
                     communication_position = static_uav.position if static_uav else region.center
                     
                     satellite_success = self.satellite_constellation.assign_task_to_satellite(
-                        task, communication_position
+                        task, communication_position, self.current_time
                     )
                     if satellite_success and verbose:
                         print(f"        🛰️  Task {task.id} escalated to satellite (dynamic UAV {selected_uav.id} overloaded)")
@@ -579,7 +598,7 @@ class SAGINNetwork:
                 communication_position = static_uav.position if static_uav else region.center
                 
                 satellite_success = self.satellite_constellation.assign_task_to_satellite(
-                    task, communication_position
+                    task, communication_position, self.current_time
                 )
                 if satellite_success and verbose:
                     print(f"        🛰️  Task {task.id} fallback to satellite (no dynamic UAVs available)")
@@ -600,7 +619,7 @@ class SAGINNetwork:
             communication_position = static_uav.position if static_uav else region.center
             
             success = self.satellite_constellation.assign_task_to_satellite(
-                task, communication_position
+                task, communication_position, self.current_time
             )
             if success and verbose:
                 print(f"        🛰️  Task {task.id} assigned to satellite")
@@ -1448,9 +1467,9 @@ class SAGINNetwork:
                 print(f"Warning: Could not import latency model: {e}")
                 self.latency_model = None
     
-    def setup_network_topology_with_grid(self, grid_config, task_config=None) -> None:
+    def setup_network_topology_with_grid(self, grid_config, task_config=None, satellite_config=None) -> None:
         """Setup network topology using a grid configuration object."""
-        self.setup_network_topology(grid_config=grid_config, task_config=task_config)
+        self.setup_network_topology(grid_config=grid_config, task_config=task_config, satellite_config=satellite_config)
     
     def _reposition_dynamic_uavs(self, verbose: bool = False):
         """Reposition dynamic UAVs to balance load across regions."""

@@ -119,6 +119,9 @@ class SatelliteConfig:
     # Communication
     transmit_power: float = 100.0  # W
     antenna_gain: float = 30.0  # dB
+    
+    # Latency control
+    additional_processing_delay: float = 18.0  # seconds (configurable satellite processing delay)
 
 
 @dataclass
@@ -297,7 +300,7 @@ SAGIN_CONFIGS = {
         ),
         tasks=TaskConfig(
             base_task_rate=50,
-            task_type_proportions={'normal': 0.1, 'computation_intensive': 0.1, 'data_intensive': 0.1, 'latency_sensitive': 0.7},
+            task_type_proportions={'normal': 0.0, 'computation_intensive': 0.0, 'data_intensive': 0.0, 'latency_sensitive': 1.0},
             burst_events=[(5, 100.0, 50.0, 3.0), (10, 200.0, 30.0, 2.5), (15, 350.0, 40.0, 2.0)]
         ),
         simulation=SimulationConfig(

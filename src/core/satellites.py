@@ -56,7 +56,7 @@ class Satellite:
     velocity: Velocity = field(default_factory=lambda: Velocity(0.0, 0.0, 0.0))
     
     # Computing capabilities
-    cpu_capacity: float = 5e9  # cycles per second (higher than UAVs)
+    cpu_capacity: float = 5e8  # cycles per second (higher than UAVs)
     current_workload: float = 0.0
     
     # Communication
@@ -188,11 +188,31 @@ class Satellite:
     def calculate_propagation_delay(self, ground_position: Position) -> float:
         """Calculate propagation delay to ground position."""
         distance = self.calculate_link_distance(ground_position)
-        return distance / 3e8  # speed of light
+        basic_delay = distance / 3e8  # speed of light
+        
+        # Add additional processing delay if configured
+        additional_delay = getattr(self, 'additional_processing_delay', 0.0)
+        return basic_delay + additional_delay
     
-    def add_task(self, task: Task) -> bool:
+    def add_task(self, task: Task, current_time: float = 0.0) -> bool:
         """Add a task to the satellite's processing queue."""
         if not self.is_active:
+            return False
+        
+        # Check if task can potentially meet its deadline considering communication delay
+        # For this, we need to estimate return communication delay to ground
+        # Using a typical ground position (simplified)
+        ground_position = Position(0.0, 0.0, 0.0)  # Simplified ground reference
+        communication_delay = self.calculate_propagation_delay(ground_position)
+        
+        # Task must have enough time for processing AND communication back to ground
+        processing_time = task.cpu_cycles / self.cpu_capacity
+        total_time_needed = processing_time + communication_delay
+        
+        # Check if deadline can be met from current time
+        if task.deadline <= current_time + total_time_needed:
+            # Task would miss deadline even with immediate processing
+            task.status = TaskStatus.DEADLINE_MISSED
             return False
         
         self.task_queue.append(task)
@@ -214,7 +234,16 @@ class Satellite:
         # Move tasks from queue to processing
         while self.task_queue and remaining_capacity > 0:
             task = self.task_queue.pop(0)
-            if task.deadline > current_time:  # Check deadline
+            
+            # Check if task can still meet deadline considering communication delay
+            ground_position = Position(0.0, 0.0, 0.0)  # Simplified ground reference
+            communication_delay = self.calculate_propagation_delay(ground_position)
+            processing_time = task.cpu_cycles / self.cpu_capacity
+            
+            # Task completion time including communication delay
+            completion_time = current_time + processing_time + communication_delay
+            
+            if completion_time <= task.deadline:  # Check deadline with communication delay
                 task.status = TaskStatus.IN_PROGRESS
                 task.start_time = current_time
                 self.processing_tasks.append(task)
@@ -232,11 +261,25 @@ class Satellite:
             required_time = task.cpu_cycles / self.cpu_capacity
             
             if processing_time >= required_time:
-                # Task completed
-                task.status = TaskStatus.COMPLETED
-                task.completion_time = current_time
-                completed.append(task)
-                self.completed_tasks.append(task.id)
+                # Task processing completed, but add communication delay for real completion
+                ground_position = Position(0.0, 0.0, 0.0)  # Simplified ground reference
+                communication_delay = self.calculate_propagation_delay(ground_position)
+                
+                # Real completion time includes communication delay
+                real_completion_time = current_time + communication_delay
+                
+                # Check if task meets deadline with communication delay
+                if real_completion_time <= task.deadline:
+                    task.status = TaskStatus.COMPLETED
+                    task.completion_time = real_completion_time
+                    completed.append(task)
+                    self.completed_tasks.append(task.id)
+                else:
+                    # Task missed deadline due to communication delay
+                    task.status = TaskStatus.DEADLINE_MISSED
+                    task.completion_time = real_completion_time
+                    completed.append(task)
+                    self.completed_tasks.append(task.id)
             else:
                 still_processing.append(task)
         
@@ -261,10 +304,11 @@ class Satellite:
 class SatelliteConstellation:
     """Manages a constellation of satellites."""
     
-    def __init__(self, system_params: SystemParameters):
+    def __init__(self, system_params: SystemParameters, additional_processing_delay: float = 0.0):
         self.system_params = system_params
         self.satellites: Dict[int, Satellite] = {}
         self.next_satellite_id = 1
+        self.additional_processing_delay = additional_processing_delay
         
         # Coverage tracking
         self.coverage_map: Dict[Tuple[int, int], List[int]] = {}  # (region_id, time_slot) -> [satellite_ids]
@@ -289,6 +333,9 @@ class SatelliteConstellation:
             transmit_power=100.0,
             antenna_gain=20.0
         )
+        
+        # Add additional processing delay if configured
+        satellite.additional_processing_delay = self.additional_processing_delay
         
         self.satellites[sat_id] = satellite
         return sat_id
@@ -364,14 +411,14 @@ class SatelliteConstellation:
         
         return best_satellite
     
-    def assign_task_to_satellite(self, task: Task, ground_position: Position) -> bool:
+    def assign_task_to_satellite(self, task: Task, ground_position: Position, current_time: float = 0.0) -> bool:
         """Assign a task to the best available satellite."""
         satellite = self.get_best_satellite(ground_position)
         
         if satellite is None:
             return False
         
-        return satellite.add_task(task)
+        return satellite.add_task(task, current_time)
     
     def get_constellation_state(self) -> Dict:
         """Get state of the entire constellation."""
@@ -433,23 +480,8 @@ class SatelliteConstellation:
         if best_satellite is None:
             return float('inf')  # No satellite available
         
-        # Calculate round-trip time
-        distance = best_satellite.calculate_link_distance(ground_position)
-        
-        # Speed of light in vacuum (approximately)
-        speed_of_light = 3e8  # m/s
-        
-        # Propagation delay (one way)
-        propagation_delay = distance / speed_of_light
-        
-        # Add processing delays (simplified)
-        transmission_delay = 0.001  # 1ms for transmission processing
-        processing_delay = 0.002    # 2ms for satellite processing
-        
-        # Total delay (round trip)
-        total_delay = 2 * propagation_delay + transmission_delay + processing_delay
-        
-        return total_delay
+        # Use the satellite's own propagation delay calculation which includes additional processing delay
+        return best_satellite.calculate_propagation_delay(ground_position)
     
     def get_link_quality_to_region(self, ground_position: Position) -> Dict[str, float]:
         """Get link quality metrics to best satellite from ground position."""

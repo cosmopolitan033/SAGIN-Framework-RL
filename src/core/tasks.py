@@ -54,7 +54,7 @@ DEFAULT_TASK_CHARACTERISTICS = {
         priority=1.0
     ),
     TaskType.LATENCY_SENSITIVE: TaskCharacteristics(
-        cpu_cycles_mean=1e8, cpu_cycles_std=5e7,
+        cpu_cycles_mean=5e9, cpu_cycles_std=5e7,
         data_size_in_mean=0.1, data_size_in_std=0.05,
         data_size_out_mean=0.05, data_size_out_std=0.02,
         deadline_mean=2.0, deadline_std=0.5,

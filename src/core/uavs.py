@@ -36,8 +36,8 @@ class UAV:
     altitude: float = 100.0  # m
     
     # Energy system
-    battery_capacity: float = math.inf
-    current_energy: float = math.inf  # J
+    battery_capacity: float = 100000.0  # J (100 kJ)
+    current_energy: float = 100000.0  # J (start fully charged)
     min_energy_threshold: float = 1000.0  # J
     
     # Communication
@@ -46,7 +46,7 @@ class UAV:
     communication_range: float = 1000.0  # m
     
     # Computing
-    cpu_capacity: float = 1e9  # cycles per second
+    cpu_capacity: float = 1e6  # cycles per second
     current_workload: float = 0.0  # current CPU cycles
     
     # Task management
@@ -85,6 +85,16 @@ class UAV:
         if not self.is_available:
             return False
         
+        # Check if task can potentially be completed given current queue
+        estimated_queue_time = self.total_workload / self.cpu_capacity
+        estimated_processing_time = task.cpu_cycles / self.cpu_capacity
+        estimated_completion_time = estimated_queue_time + estimated_processing_time
+        
+        # If the task cannot possibly meet its deadline, reject it
+        if estimated_completion_time > task.deadline:
+            task.status = TaskStatus.DEADLINE_MISSED
+            return False
+        
         self.task_queue.append(task)
         task.assigned_node_id = self.id
         task.status = TaskStatus.PENDING
@@ -102,11 +112,16 @@ class UAV:
         # Move tasks from queue to processing
         while self.task_queue and remaining_capacity > 0:
             task = self.task_queue.pop(0)
-            if task.deadline > current_time:  # Check deadline
+            
+            # Check if task can still meet deadline with current processing time
+            processing_time = task.cpu_cycles / self.cpu_capacity
+            expected_completion_time = current_time + processing_time
+            
+            if expected_completion_time <= task.deadline:  # More realistic deadline check
                 task.status = TaskStatus.IN_PROGRESS
                 task.start_time = current_time
                 self.processing_tasks.append(task)
-                remaining_capacity -= task.cpu_cycles / task.deadline
+                remaining_capacity -= task.cpu_cycles / self.cpu_capacity  # Use actual processing rate
             else:
                 task.status = TaskStatus.DEADLINE_MISSED
                 completed.append(task)
@@ -117,10 +132,13 @@ class UAV:
             processing_time = current_time - task.start_time
             required_time = task.cpu_cycles / self.cpu_capacity
             
+            print(f"DEBUG: Task {task.id} processing - current_time={current_time}, start_time={task.start_time}, processing_time={processing_time}, required_time={required_time}")
+            
             if processing_time >= required_time:
                 # Task completed
                 task.status = TaskStatus.COMPLETED
                 task.completion_time = current_time
+                print(f"DEBUG: UAV {self.id} completed task {task.id} at current_time={current_time}")
                 completed.append(task)
                 self.completed_tasks.append(task.id)
             else:
@@ -166,7 +184,7 @@ class StaticUAV(UAV):
     """Static UAV providing continuous coverage for a region."""
     
     def __init__(self, uav_id: int, region_id: int, position: Position, 
-                 cpu_capacity: float = 1e9):
+                 cpu_capacity: float = 1e8):  # Increased to 1e8 (100M cycles/s) for more realistic performance
         super().__init__(
             id=uav_id,
             node_type=NodeType.STATIC_UAV,
@@ -229,7 +247,7 @@ class DynamicUAV(UAV):
     """Dynamic UAV that can be reassigned between regions."""
     
     def __init__(self, uav_id: int, initial_position: Position, 
-                 cpu_capacity: float = 1e9):
+                 cpu_capacity: float = 1e8):  # Increased to 1e8 (100M cycles/s) for more realistic performance
         super().__init__(
             id=uav_id,
             node_type=NodeType.DYNAMIC_UAV,
@@ -314,7 +332,7 @@ class UAVManager:
         self.next_uav_id = 1
     
     def create_static_uav(self, region_id: int, position: Position,
-                         cpu_capacity: float = 1e9) -> int:
+                         cpu_capacity: float = 1e8) -> int:  # Increased to 1e8 (100M cycles/s)
         """Create a static UAV for a region."""
         uav_id = self.next_uav_id
         self.next_uav_id += 1
@@ -325,7 +343,7 @@ class UAVManager:
         return uav_id
     
     def create_dynamic_uav(self, initial_position: Position,
-                          cpu_capacity: float = 1e9) -> int:
+                          cpu_capacity: float = 1e8) -> int:  # Increased to 1e8 (100M cycles/s)
         """Create a dynamic UAV."""
         uav_id = self.next_uav_id
         self.next_uav_id += 1

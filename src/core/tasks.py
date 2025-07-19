@@ -54,7 +54,7 @@ DEFAULT_TASK_CHARACTERISTICS = {
         priority=1.0
     ),
     TaskType.LATENCY_SENSITIVE: TaskCharacteristics(
-        cpu_cycles_mean=5e9, cpu_cycles_std=5e7,
+        cpu_cycles_mean=3e8, cpu_cycles_std=3e7,  # Fixed: was 5e9, reduced to match config
         data_size_in_mean=0.1, data_size_in_std=0.05,
         data_size_out_mean=0.05, data_size_out_std=0.02,
         deadline_mean=2.0, deadline_std=0.5,
@@ -405,6 +405,11 @@ class TaskManager:
     
     def mark_task_completed(self, task: Task):
         """Mark a task as completed."""
+        # Debug: Check completion_time before and after
+        original_completion_time = task.completion_time
+        
+        # Preserve completion_time if already set by UAV or satellite
+        # Only set task status here, don't override timing information
         task.status = TaskStatus.COMPLETED
         
         # Move from active to completed
@@ -412,6 +417,10 @@ class TaskManager:
             del self.active_tasks[task.id]
         
         self.completed_tasks[task.id] = task
+        
+        # Debug output
+        if original_completion_time == 0.0:
+            print(f"DEBUG: Task {task.id} marked completed but still has completion_time=0.0 (not set by UAV/satellite)")
         
         # Update metrics
         self.metrics['total_completed'] += 1

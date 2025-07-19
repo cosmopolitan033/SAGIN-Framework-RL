@@ -22,7 +22,7 @@ class GridConfig:
     region_intensity_variance: float = 0.5  # Random variance in intensity
     
     # UAV properties per region
-    static_uav_cpu_capacity: float = 1e9  # CPU cycles per second
+    static_uav_cpu_capacity: float = 1e8  # CPU cycles per second
     
     @property
     def total_regions(self) -> int:
@@ -87,7 +87,7 @@ class UAVConfig:
     uav_max_speed: float = 20.0  # m/s
     static_uav_altitude: float = 120.0  # m (static UAVs at lower altitude)
     dynamic_uav_altitude: float = 240.0  # m (dynamic UAVs at exactly 2x static altitude)
-    uav_cpu_capacity: float = 1e9  # cycles per second
+    uav_cpu_capacity: float = 1e8  # cycles per second (100M cycles/s)
     
     # Legacy property for backward compatibility
     @property
@@ -293,15 +293,19 @@ SAGIN_CONFIGS = {
             bus_vehicles=20
         ),
         uavs=UAVConfig(
-            dynamic_uavs=15
+            dynamic_uavs=5  # Reduced from 15 to 5 for higher resource pressure
         ),
         satellites=SatelliteConfig(
             num_satellites=12
         ),
         tasks=TaskConfig(
             base_task_rate=50,
+            cpu_cycles_mean=3e8,  # Higher task complexity (300M cycles = 3s processing)
+            cpu_cycles_std=3e7,   # Reduced standard deviation (30M cycles) to keep tasks reasonable
+            deadline_mean=2.5,    # Tighter deadlines (2.5 seconds)
+            deadline_std=0.5,
             task_type_proportions={'normal': 0.0, 'computation_intensive': 0.0, 'data_intensive': 0.0, 'latency_sensitive': 1.0},
-            burst_events=[(5, 100.0, 50.0, 3.0), (10, 200.0, 30.0, 2.5), (15, 350.0, 40.0, 2.0)]
+            burst_events=[(5, 100.0, 50.0, 5.0), (10, 200.0, 30.0, 4.0), (15, 350.0, 40.0, 3.0)]  # Higher burst intensities
         ),
         simulation=SimulationConfig(
             total_epochs=500,

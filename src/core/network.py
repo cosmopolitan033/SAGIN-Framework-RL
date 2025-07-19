@@ -11,7 +11,7 @@ import sys
 import json
 from collections import defaultdict
 
-from .types import Position, Region, SystemParameters, TaskDecision
+from .types import Position, Region, SystemParameters, TaskDecision, TaskStatus
 from .vehicles import VehicleManager
 from .uavs import UAVManager, UAVStatus
 from .satellites import SatelliteConstellation
@@ -305,9 +305,17 @@ class SAGINNetwork:
         
         # Mark all UAV completed tasks in the task manager
         for task in static_completed + dynamic_completed:
-            self.task_manager.mark_task_completed(task)
-            if verbose:
-                print(f"    ✅ Task {task.id} completed by UAV and registered")
+            print(f"DEBUG: Network registering UAV completed task {task.id} with completion_time={task.completion_time}")
+            
+            # Check if task was actually completed or deadline missed
+            if task.status == TaskStatus.DEADLINE_MISSED:
+                self.task_manager.mark_task_failed(task, "deadline_missed")
+                if verbose:
+                    print(f"    ❌ Task {task.id} failed due to deadline miss")
+            else:
+                self.task_manager.mark_task_completed(task)
+                if verbose:
+                    print(f"    ✅ Task {task.id} completed by UAV and registered")
         
         # Log detailed UAV status
         if verbose:
@@ -354,9 +362,17 @@ class SAGINNetwork:
         
         # Mark all satellite completed tasks in the task manager
         for task in satellite_completed:
-            self.task_manager.mark_task_completed(task)
-            if verbose:
-                print(f"    ✅ Task {task.id} completed by satellite and registered")
+            print(f"DEBUG: Network registering satellite completed task {task.id} with completion_time={task.completion_time}")
+            
+            # Check if task was actually completed or deadline missed
+            if task.status == TaskStatus.DEADLINE_MISSED:
+                self.task_manager.mark_task_failed(task, "deadline_missed")
+                if verbose:
+                    print(f"    ❌ Task {task.id} failed due to deadline miss")
+            else:
+                self.task_manager.mark_task_completed(task)
+                if verbose:
+                    print(f"    ✅ Task {task.id} completed by satellite and registered")
         
         # Log detailed satellite status
         if verbose:
@@ -538,6 +554,8 @@ class SAGINNetwork:
                     decisions_made[decision.value] += 1
                 else:
                     decisions_made['failed'] += 1
+                    # Mark task as failed in task manager
+                    self.task_manager.mark_task_failed(task, "execution_failed")
                     if verbose:
                         print(f"        ❌ Failed to execute decision {decision.value} for task {task.id}")
         

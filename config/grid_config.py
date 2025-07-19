@@ -299,7 +299,7 @@ SAGIN_CONFIGS = {
             num_satellites=12
         ),
         tasks=TaskConfig(
-            base_task_rate=50,
+            base_task_rate=2.0,   # Reduced from 150 to 2.0 for realistic load (100 tasks/sec total)
             cpu_cycles_mean=3e8,  # Higher task complexity (300M cycles = 3s processing)
             cpu_cycles_std=3e7,   # Reduced standard deviation (30M cycles) to keep tasks reasonable
             deadline_mean=2.5,    # Tighter deadlines (2.5 seconds)

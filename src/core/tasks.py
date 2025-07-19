@@ -475,9 +475,9 @@ class TaskManager:
     
     def get_system_metrics(self) -> Dict:
         """Get overall system metrics."""
-        # Calculate success rate
-        total_processed = self.metrics['total_completed'] + self.metrics['total_failed']
-        success_rate = self.metrics['total_completed'] / total_processed if total_processed > 0 else 0
+        # Calculate success rate based on total generated tasks (not just processed)
+        total_generated = self.metrics['total_generated']
+        success_rate = self.metrics['total_completed'] / total_generated if total_generated > 0 else 0
         
         self.metrics['success_rate'] = success_rate
         

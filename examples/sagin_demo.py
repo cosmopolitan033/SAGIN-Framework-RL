@@ -665,6 +665,21 @@ class SAGINDemo:
         
         # Final performance summary
         final_metrics = network.get_performance_summary()
+        
+        # Get task type distribution
+        task_stats = network.task_manager.task_generator.get_generation_statistics()
+        task_type_text = ""
+        if task_stats['by_type']:
+            total_tasks = task_stats['total_generated']
+            task_type_lines = []
+            for task_type, count in task_stats['by_type'].items():
+                if total_tasks > 0:
+                    percentage = (count / total_tasks) * 100
+                    task_type_name = task_type.value.replace('_', ' ').title()
+                    task_type_lines.append(f"{task_type_name}: {count} ({percentage:.1f}%)")
+            if task_type_lines:
+                task_type_text = "\n\nTask Type Distribution:\n" + "\n".join(task_type_lines)
+        
         final_text = f"""Final Performance:
 Tasks Generated: {final_metrics['final_metrics'].total_tasks_generated}
 Tasks Completed: {final_metrics['final_metrics'].total_tasks_completed}
@@ -673,7 +688,7 @@ Avg Latency: {final_metrics['final_metrics'].average_latency:.3f}s
 Load Imbalance: {final_metrics['final_metrics'].load_imbalance:.3f}
 UAV Utilization: {final_metrics['final_metrics'].uav_utilization:.3f}
 Satellite Utilization: {final_metrics['final_metrics'].satellite_utilization:.3f}
-Coverage: {final_metrics['final_metrics'].coverage_percentage:.1f}%"""
+Coverage: {final_metrics['final_metrics'].coverage_percentage:.1f}%{task_type_text}"""
         
         axes[1, 2].text(0.05, 0.95, final_text, transform=axes[1, 2].transAxes,
                        verticalalignment='top', fontsize=10, family='monospace')

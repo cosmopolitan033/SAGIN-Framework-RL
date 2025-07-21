@@ -16,7 +16,7 @@ from datetime import datetime
 
 from ..core.network import SAGINNetwork
 from .environment import SAGINRLEnvironment
-from .agents import CentralAgent, LocalAgent
+from .agents import CentralAgent, LocalAgent, SharedStaticUAVAgent, SharedDynamicUAVAgent
 
 
 class HierarchicalRLTrainer:
@@ -50,11 +50,19 @@ class HierarchicalRLTrainer:
             config.get('central_agent_config', {})
         )
         
-        # Create local agents for each region
-        self.local_agents = {}
+        # Create shared static UAV agent (replaces per-region local agents)
+        # According to the paper: all static UAVs share one RL model
         self.action_space = ['local', 'dynamic', 'satellite']
         local_state_dim = self._estimate_local_state_dim()
         
+        self.shared_static_uav_agent = SharedStaticUAVAgent(
+            local_state_dim,
+            self.action_space,
+            config.get('static_uav_agent_config', {})
+        )
+        
+        # Keep LocalAgents for backward compatibility (will be deprecated)
+        self.local_agents = {}
         for region_id in network.regions.keys():
             self.local_agents[region_id] = LocalAgent(
                 region_id,
@@ -62,6 +70,9 @@ class HierarchicalRLTrainer:
                 self.action_space,
                 config.get('local_agent_config', {})
             )
+        
+        # Note: Dynamic UAVs do NOT need RL agents (they only compute, no offloading decisions)
+        # Remove SharedDynamicUAVAgent as it's not needed per the paper
         
         # Training parameters
         self.num_episodes = config.get('num_episodes', 1000)
@@ -72,6 +83,7 @@ class HierarchicalRLTrainer:
         self.rewards_history = []
         self.central_losses = []
         self.local_losses = {}
+        self.static_uav_losses = []  # For shared static UAV agent
         for region_id in network.regions.keys():
             self.local_losses[region_id] = []
         
@@ -127,6 +139,18 @@ class HierarchicalRLTrainer:
         # - Number of available dynamic UAVs
         # - Task intensity
         # - Task features: data_size, workload, deadline, priority
+        return 8
+    
+    def _estimate_dynamic_uav_state_dim(self) -> int:
+        """
+        Estimate the dimension of the dynamic UAV agent's state space.
+        
+        Returns:
+            The estimated state dimension
+        """
+        # State includes:
+        # - UAV state: queue_length, residual_energy, cpu_utilization, current_region (4 features)
+        # - Task info: urgency, complexity, deadline, type_encoding (4 features)
         return 8
     
     def train(self, verbose: bool = True):
@@ -239,6 +263,10 @@ class HierarchicalRLTrainer:
                 self.local_losses[region_id].append(local_loss)
                 local_losses[region_id] = local_loss
             
+            # Train shared static UAV agent
+            static_uav_loss = self.shared_static_uav_agent.train()
+            self.static_uav_losses.append(static_uav_loss)
+            
             # Record episode reward
             self.rewards_history.append(episode_reward)
             
@@ -271,12 +299,13 @@ class HierarchicalRLTrainer:
             'rewards_history': self.rewards_history,
             'central_losses': self.central_losses,
             'local_losses': self.local_losses,
+            'static_uav_losses': self.static_uav_losses,
             'final_average_reward': np.mean(self.rewards_history[-100:]) if self.rewards_history else 0.0,
             'total_episodes': self.num_episodes,
             'training_time': time.time() - start_time
         }
         
-        return self.central_agent, self.local_agents, training_stats
+        return self.central_agent, self.shared_static_uav_agent, training_stats
     
     def save_checkpoints(self, episode: int, final: bool = False):
         """

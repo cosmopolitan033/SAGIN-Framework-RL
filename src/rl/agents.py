@@ -481,6 +481,513 @@ class LocalAgent:
         assert self.region_id == checkpoint['region_id'], "Loading model for wrong region"
 
 
+class SharedStaticUAVAgent:
+    """
+    Shared agent for all static UAVs in the SAGIN system.
+    
+    According to the paper, all static UAVs share a single RL model for making
+    task offloading decisions (local, dynamic, satellite). This reduces model
+    complexity and enables knowledge sharing across all static UAVs.
+    """
+    
+    def __init__(self, state_dim: int, action_space: List[str], config: Dict[str, Any]):
+        """
+        Initialize the shared static UAV agent.
+        
+        Args:
+            state_dim: Dimension of the static UAV state space
+            action_space: List of possible actions ('local', 'dynamic', 'satellite')
+            config: Configuration parameters
+        """
+        self.action_space = action_space
+        self.config = config
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Number of possible actions
+        self.n_actions = len(action_space)
+        
+        # Create shared policy network
+        self.network = PolicyNetwork(state_dim, self.n_actions, hidden_dim=config.get('hidden_dim', 128))
+        self.network.to(self.device)
+        
+        # Optimizer
+        self.optimizer = optim.Adam(self.network.parameters(), 
+                                   lr=config.get('learning_rate', 0.001))
+        
+        # Shared experience buffer
+        self.experiences = []
+        
+        # Training parameters
+        self.gamma = config.get('gamma', 0.99)
+        
+        # Exploration parameters
+        self.epsilon = config.get('epsilon_start', 1.0)
+        self.epsilon_min = config.get('epsilon_min', 0.1)
+        self.epsilon_decay = config.get('epsilon_decay', 0.995)
+        
+        # Performance tracking
+        self.training_losses = []
+        
+        # Usage tracking
+        self.usage_count = 0
+    
+    def preprocess_state(self, state: Dict[str, Any], task_info: Dict[str, Any]) -> torch.Tensor:
+        """
+        Preprocess the local state and task info into a format suitable for the network.
+        
+        Args:
+            state: Dictionary containing local state components (from paper: Q_r, E_static, N_dyn, Lambda_r)
+            task_info: Information about the task to be offloaded
+            
+        Returns:
+            Tensor representation of the state-task combination
+        """
+        if state is None:
+            return None
+            
+        # Extract state features (from paper: s^local_{r,t})
+        queue_length = state.get('queue_length', 0)  # Q_r(t)
+        residual_energy = state.get('residual_energy', 0.0)  # E_{v^stat_r}(t)
+        available_dynamic_uavs = state.get('available_dynamic_uavs', 0)  # N^dyn_r(t)
+        task_intensity = state.get('task_intensity', 0.0)  # Lambda_r(t)
+        
+        # Extract task features
+        task_urgency = task_info.get('urgency', 0.5) if task_info else 0.5
+        task_complexity = task_info.get('complexity', 0.5) if task_info else 0.5
+        task_deadline = task_info.get('deadline', 10.0) if task_info else 10.0
+        task_type_encoding = task_info.get('type_encoding', 0.0) if task_info else 0.0
+        
+        # Normalize features
+        queue_length_norm = min(queue_length / 10.0, 1.0)  # Assume max queue of 10
+        urgency_norm = task_urgency
+        complexity_norm = task_complexity
+        deadline_norm = min(task_deadline / 30.0, 1.0)  # Normalize deadline to 30 seconds max
+        
+        # Combine features
+        state_features = [
+            queue_length_norm,
+            residual_energy,
+            available_dynamic_uavs / 10.0,  # Normalize assuming max 10 dynamic UAVs
+            task_intensity,
+            urgency_norm,
+            complexity_norm,
+            deadline_norm,
+            task_type_encoding
+        ]
+        
+        return torch.FloatTensor(state_features).to(self.device)
+    
+    def select_action(self, state: Dict[str, Any], task_info: Dict[str, Any], 
+                      explore: bool = True) -> str:
+        """
+        Select an action for any static UAV given its state and task information.
+        
+        Args:
+            state: Current local state of the static UAV (Q_r, E, N_dyn, Lambda_r)
+            task_info: Information about the task to be offloaded
+            explore: Whether to use exploration (epsilon-greedy)
+            
+        Returns:
+            Selected action ('local', 'dynamic', or 'satellite')
+        """
+        self.usage_count += 1
+        
+        if explore and random.random() < self.epsilon:
+            # Random exploration
+            return random.choice(self.action_space)
+        
+        # Preprocess state and task info
+        state_tensor = self.preprocess_state(state, task_info)
+        if state_tensor is None:
+            return self.action_space[0]  # Default to 'local' if state is invalid
+        
+        # Get action probabilities from network
+        with torch.no_grad():
+            action_probs = self.network(state_tensor.unsqueeze(0)).cpu().numpy()[0]
+        
+        # Select action with highest probability
+        action_idx = np.argmax(action_probs)
+        
+        return self.action_space[action_idx]
+    
+    def store_experience(self, state, task_info, action, reward, next_state, next_task_info, done):
+        """
+        Store experience from any static UAV for shared learning.
+        
+        Args:
+            state: State at time of decision
+            task_info: Task information at time of decision
+            action: Action taken (offloading decision)
+            reward: Reward received
+            next_state: State after action
+            next_task_info: Task information in next state
+            done: Whether episode is done
+        """
+        action_idx = self.action_space.index(action)
+        
+        self.experiences.append({
+            'state': state,
+            'task_info': task_info,
+            'action': action_idx,
+            'reward': reward,
+            'next_state': next_state,
+            'next_task_info': next_task_info,
+            'done': done
+        })
+    
+    def train(self, batch_size: int = 64):
+        """
+        Train the shared agent using collected experiences from all static UAVs.
+        
+        Args:
+            batch_size: Number of experiences to use in one training step
+            
+        Returns:
+            Loss value from training
+        """
+        if len(self.experiences) < batch_size:
+            return 0.0  # Not enough experiences
+        
+        # Sample random batch
+        batch = random.sample(self.experiences, batch_size)
+        
+        # Process batch
+        state_tensors = []
+        next_state_tensors = []
+        action_indices = []
+        rewards = []
+        dones = []
+        
+        for exp in batch:
+            state_tensor = self.preprocess_state(exp['state'], exp['task_info'])
+            if exp['next_state'] is not None:
+                next_state_tensor = self.preprocess_state(exp['next_state'], exp['next_task_info'])
+            else:
+                next_state_tensor = torch.zeros_like(state_tensor)
+            
+            state_tensors.append(state_tensor)
+            next_state_tensors.append(next_state_tensor)
+            action_indices.append(exp['action'])
+            rewards.append(exp['reward'])
+            dones.append(float(exp['done']))
+        
+        # Convert to tensors
+        states = torch.stack(state_tensors)
+        next_states = torch.stack(next_state_tensors)
+        actions = torch.LongTensor(action_indices).to(self.device)
+        rewards = torch.FloatTensor(rewards).to(self.device)
+        dones = torch.FloatTensor(dones).to(self.device)
+        
+        # Compute loss using REINFORCE algorithm (policy gradient)
+        self.optimizer.zero_grad()
+        
+        # Get log probabilities
+        log_probs = torch.log(self.network(states) + 1e-10)  # Add small constant to avoid log(0)
+        selected_log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze()
+        
+        # Simple reward-to-go estimation (can be improved with value function)
+        loss = -(selected_log_probs * rewards).mean()
+        
+        # Backpropagate
+        loss.backward()
+        self.optimizer.step()
+        
+        # Decay exploration rate
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+        
+        # Track loss
+        loss_value = loss.item()
+        self.training_losses.append(loss_value)
+        
+        return loss_value
+    
+    def save(self, path: str):
+        """Save shared agent model to disk."""
+        torch.save({
+            'network_state_dict': self.network.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'epsilon': self.epsilon,
+            'config': self.config,
+            'action_space': self.action_space,
+            'usage_count': self.usage_count,
+            'training_losses': self.training_losses
+        }, path)
+    
+    def load(self, path: str):
+        """Load shared agent model from disk."""
+        checkpoint = torch.load(path)
+        self.network.load_state_dict(checkpoint['network_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.epsilon = checkpoint['epsilon']
+        self.config = checkpoint['config']
+        self.action_space = checkpoint['action_space']
+        self.usage_count = checkpoint.get('usage_count', 0)
+        self.training_losses = checkpoint.get('training_losses', [])
+    
+    def get_usage_stats(self) -> Dict[str, Any]:
+        """Get usage statistics for the shared agent."""
+        return {
+            'total_decisions': self.usage_count,
+            'training_episodes': len(self.training_losses),
+            'average_loss': np.mean(self.training_losses[-100:]) if self.training_losses else 0.0,
+            'exploration_rate': self.epsilon
+        }
+
+
+class SharedDynamicUAVAgent:
+    """
+    Shared agent for all dynamic UAVs in the SAGIN system.
+    
+    This agent provides a single shared model that all dynamic UAVs use for
+    task processing decisions, rather than using individual agents per UAV.
+    This reduces model complexity and enables knowledge sharing across UAVs.
+    """
+    
+    def __init__(self, state_dim: int, action_space: List[str], config: Dict[str, Any]):
+        """
+        Initialize the shared dynamic UAV agent.
+        
+        Args:
+            state_dim: Dimension of the UAV state space
+            action_space: List of possible actions ('process', 'forward_to_satellite', 'reject')
+            config: Configuration parameters
+        """
+        self.action_space = action_space
+        self.config = config
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Number of possible actions
+        self.n_actions = len(action_space)
+        
+        # Create shared policy network
+        self.network = PolicyNetwork(state_dim, self.n_actions, hidden_dim=config.get('hidden_dim', 128))
+        self.network.to(self.device)
+        
+        # Optimizer
+        self.optimizer = optim.Adam(self.network.parameters(), 
+                                   lr=config.get('learning_rate', 0.001))
+        
+        # Shared experience buffer
+        self.experiences = []
+        
+        # Training parameters
+        self.gamma = config.get('gamma', 0.99)
+        
+        # Exploration parameters
+        self.epsilon = config.get('epsilon_start', 1.0)
+        self.epsilon_min = config.get('epsilon_min', 0.1)
+        self.epsilon_decay = config.get('epsilon_decay', 0.995)
+        
+        # Performance tracking
+        self.training_losses = []
+        
+        # Usage tracking
+        self.usage_count = 0
+    
+    def preprocess_state(self, uav_state: Dict[str, Any], task_info: Dict[str, Any]) -> torch.Tensor:
+        """
+        Preprocess the UAV state and task info into a format suitable for the network.
+        
+        Args:
+            uav_state: Dictionary containing UAV state (energy, queue_length, position, etc.)
+            task_info: Information about the task to be processed
+            
+        Returns:
+            Tensor representation of the UAV state-task combination
+        """
+        if uav_state is None or task_info is None:
+            return None
+            
+        # Extract UAV state features
+        queue_length = uav_state.get('queue_length', 0)
+        residual_energy = uav_state.get('residual_energy', 1.0)
+        cpu_utilization = uav_state.get('cpu_utilization', 0.0)
+        region_id = uav_state.get('current_region', 0)
+        
+        # Extract task features
+        task_urgency = task_info.get('urgency', 0.5)
+        task_complexity = task_info.get('complexity', 0.5)
+        task_deadline = task_info.get('deadline', 10.0)
+        task_type_encoding = task_info.get('type_encoding', 0.0)  # One-hot or categorical encoding
+        
+        # Normalize features
+        queue_length_norm = min(queue_length / 10.0, 1.0)  # Assume max queue of 10
+        urgency_norm = task_urgency
+        complexity_norm = task_complexity
+        deadline_norm = min(task_deadline / 30.0, 1.0)  # Normalize deadline to 30 seconds max
+        region_norm = region_id / 100.0  # Normalize region ID
+        
+        # Combine features
+        state_features = [
+            queue_length_norm,
+            residual_energy,
+            cpu_utilization,
+            region_norm,
+            urgency_norm,
+            complexity_norm,
+            deadline_norm,
+            task_type_encoding
+        ]
+        
+        return torch.FloatTensor(state_features).to(self.device)
+    
+    def select_action(self, uav_state: Dict[str, Any], task_info: Dict[str, Any], 
+                      explore: bool = True) -> str:
+        """
+        Select an action for a dynamic UAV given its state and task information.
+        
+        Args:
+            uav_state: Current state of the UAV
+            task_info: Information about the task to be processed
+            explore: Whether to use exploration (epsilon-greedy)
+            
+        Returns:
+            Selected action ('process', 'forward_to_satellite', or 'reject')
+        """
+        self.usage_count += 1
+        
+        if explore and random.random() < self.epsilon:
+            # Random exploration
+            return random.choice(self.action_space)
+        
+        # Preprocess state and task info
+        state_tensor = self.preprocess_state(uav_state, task_info)
+        if state_tensor is None:
+            return self.action_space[0]  # Default to 'process' if state is invalid
+        
+        # Get action probabilities from network
+        with torch.no_grad():
+            action_probs = self.network(state_tensor.unsqueeze(0)).cpu().numpy()[0]
+        
+        # Select action with highest probability
+        action_idx = np.argmax(action_probs)
+        
+        return self.action_space[action_idx]
+    
+    def store_experience(self, uav_state, task_info, action, reward, next_uav_state, next_task_info, done):
+        """
+        Store experience from any dynamic UAV for shared learning.
+        
+        Args:
+            uav_state: UAV state at time of decision
+            task_info: Task information at time of decision
+            action: Action taken by the UAV
+            reward: Reward received
+            next_uav_state: UAV state after action
+            next_task_info: Task information in next state
+            done: Whether episode is done
+        """
+        action_idx = self.action_space.index(action)
+        
+        self.experiences.append({
+            'uav_state': uav_state,
+            'task_info': task_info,
+            'action': action_idx,
+            'reward': reward,
+            'next_uav_state': next_uav_state,
+            'next_task_info': next_task_info,
+            'done': done
+        })
+    
+    def train(self, batch_size: int = 64):
+        """
+        Train the shared agent using collected experiences from all dynamic UAVs.
+        
+        Args:
+            batch_size: Number of experiences to use in one training step
+            
+        Returns:
+            Loss value from training
+        """
+        if len(self.experiences) < batch_size:
+            return 0.0  # Not enough experiences
+        
+        # Sample random batch
+        batch = random.sample(self.experiences, batch_size)
+        
+        # Process batch
+        state_tensors = []
+        next_state_tensors = []
+        action_indices = []
+        rewards = []
+        dones = []
+        
+        for exp in batch:
+            state_tensor = self.preprocess_state(exp['uav_state'], exp['task_info'])
+            if exp['next_uav_state'] is not None:
+                next_state_tensor = self.preprocess_state(exp['next_uav_state'], exp['next_task_info'])
+            else:
+                next_state_tensor = torch.zeros_like(state_tensor)
+            
+            state_tensors.append(state_tensor)
+            next_state_tensors.append(next_state_tensor)
+            action_indices.append(exp['action'])
+            rewards.append(exp['reward'])
+            dones.append(float(exp['done']))
+        
+        # Convert to tensors
+        states = torch.stack(state_tensors)
+        next_states = torch.stack(next_state_tensors)
+        actions = torch.LongTensor(action_indices).to(self.device)
+        rewards = torch.FloatTensor(rewards).to(self.device)
+        dones = torch.FloatTensor(dones).to(self.device)
+        
+        # Compute loss using REINFORCE algorithm (policy gradient)
+        self.optimizer.zero_grad()
+        
+        # Get log probabilities
+        log_probs = torch.log(self.network(states) + 1e-10)  # Add small constant to avoid log(0)
+        selected_log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze()
+        
+        # Simple reward-to-go estimation (can be improved with value function)
+        loss = -(selected_log_probs * rewards).mean()
+        
+        # Backpropagate
+        loss.backward()
+        self.optimizer.step()
+        
+        # Decay exploration rate
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+        
+        # Track loss
+        loss_value = loss.item()
+        self.training_losses.append(loss_value)
+        
+        return loss_value
+    
+    def save(self, path: str):
+        """Save shared agent model to disk."""
+        torch.save({
+            'network_state_dict': self.network.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'epsilon': self.epsilon,
+            'config': self.config,
+            'action_space': self.action_space,
+            'usage_count': self.usage_count,
+            'training_losses': self.training_losses
+        }, path)
+    
+    def load(self, path: str):
+        """Load shared agent model from disk."""
+        checkpoint = torch.load(path)
+        self.network.load_state_dict(checkpoint['network_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.epsilon = checkpoint['epsilon']
+        self.config = checkpoint['config']
+        self.action_space = checkpoint['action_space']
+        self.usage_count = checkpoint.get('usage_count', 0)
+        self.training_losses = checkpoint.get('training_losses', [])
+    
+    def get_usage_stats(self) -> Dict[str, Any]:
+        """Get usage statistics for the shared agent."""
+        return {
+            'total_decisions': self.usage_count,
+            'training_episodes': len(self.training_losses),
+            'average_loss': np.mean(self.training_losses[-100:]) if self.training_losses else 0.0,
+            'exploration_rate': self.epsilon
+        }
+
+
 def softmax(x):
     """Compute softmax values for each set of scores in x."""
     e_x = np.exp(x - np.max(x))

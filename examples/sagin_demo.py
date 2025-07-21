@@ -364,7 +364,7 @@ class SAGINDemo:
             print("🏃 Training in progress...")
             start_time = time.time()
             
-            central_agent, local_agents, training_stats = trainer.train()
+            central_agent, shared_static_uav_agent, training_stats = trainer.train()
             
             training_time = time.time() - start_time
             print(f"✅ Training completed in {training_time:.1f} seconds")
@@ -382,7 +382,7 @@ class SAGINDemo:
                 }
             }
             
-            self.rl_manager.save_model(model_name, central_agent, local_agents, model_info)
+            self.rl_manager.save_model(model_name, central_agent, shared_static_uav_agent, model_info)
             print(f"💾 Model '{model_name}' saved successfully")
             
             return True
@@ -487,8 +487,8 @@ class SAGINDemo:
         # Set orchestration mode on the network
         if self.orchestration_mode == "rl" and self.selected_rl_model and self.rl_manager:
             try:
-                central_agent, local_agents = self.rl_manager.load_model(self.selected_rl_model, network)
-                network.set_rl_orchestration(central_agent, local_agents)
+                central_agent, shared_static_uav_agent = self.rl_manager.load_model(self.selected_rl_model, network)
+                network.set_rl_orchestration(central_agent, shared_static_uav_agent)
                 print(f"🤖 Using RL orchestration with model: {self.selected_rl_model}")
             except Exception as e:
                 print(f"❌ Failed to load RL model '{self.selected_rl_model}': {e}")

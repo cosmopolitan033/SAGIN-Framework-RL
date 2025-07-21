@@ -11,7 +11,7 @@ import time
 from .network import SAGINNetwork
 from .types import TaskDecision, Position
 from .uavs import UAVStatus
-from ..rl.agents import CentralAgent, LocalAgent
+from ..rl.agents import CentralAgent, LocalAgent, SharedStaticUAVAgent
 
 
 # Add RL orchestration methods to SAGINNetwork class
@@ -24,19 +24,20 @@ def set_heuristic_orchestration(self) -> None:
     # Reset any RL-related attributes
     self.central_agent = None
     self.local_agents = {}
+    self.shared_static_uav_agent = None
     print("✅ Heuristic orchestration mode activated")
 
 
-def set_rl_orchestration(self, central_agent: CentralAgent, local_agents: Dict[int, LocalAgent]) -> None:
+def set_rl_orchestration(self, central_agent: CentralAgent, shared_static_uav_agent: SharedStaticUAVAgent) -> None:
     """Set network to use RL-based orchestration.
     
     Args:
         central_agent: Trained central RL agent
-        local_agents: Dictionary of trained local RL agents by region ID
+        shared_static_uav_agent: Shared agent for all static UAVs
     """
     self.orchestration_mode = "rl"
     self.central_agent = central_agent
-    self.local_agents = local_agents
+    self.shared_static_uav_agent = shared_static_uav_agent
     
     # Keep reference to original methods
     self._original_process_task_offloading = self._process_task_offloading
@@ -45,7 +46,7 @@ def set_rl_orchestration(self, central_agent: CentralAgent, local_agents: Dict[i
     # Override with RL methods
     self._process_task_offloading = self._process_task_offloading_rl
     
-    print(f"✅ RL orchestration mode activated with {len(local_agents)} local agents")
+    print(f"✅ RL orchestration mode activated with shared static UAV agent")
 
 
 def get_task_offloading_decision_rl(self, task, static_uav_id: int, region_id: int) -> TaskDecision:
@@ -59,69 +60,53 @@ def get_task_offloading_decision_rl(self, task, static_uav_id: int, region_id: i
     Returns:
         TaskDecision (LOCAL, DYNAMIC, SATELLITE)
     """
-    # Check if we have a trained local agent for this region
-    if region_id not in self.local_agents:
-        # Fall back to heuristic if no agent for this region
+    # Use the shared static UAV agent for decision making
+    if self.shared_static_uav_agent:
+        # Get local state for this UAV/region
         static_uav = self.uav_manager.static_uavs.get(static_uav_id)
         if static_uav:
+            # Get state information
             available_dynamic_uavs = self.uav_manager.get_available_dynamic_uavs_in_region(region_id)
             dynamic_uav_count = len(available_dynamic_uavs)
-            visible_satellites = self.satellite_constellation.find_visible_satellites(static_uav.position)
-            satellite_available = len(visible_satellites) > 0
             
-            # Use heuristic decision
-            return static_uav.make_offloading_decision(
-                task, dynamic_uav_count, satellite_available, self.current_time
-            )
-        return TaskDecision.FAILED
-    
-    # Get state from the static UAV's perspective
+            local_state = {
+                'queue_length': static_uav.task_queue.qsize(),
+                'residual_energy': static_uav.energy,
+                'available_dynamic_uavs': dynamic_uav_count,
+                'task_intensity': len(self.pending_tasks.get(region_id, []))
+            }
+            
+            task_info = {
+                'urgency': getattr(task, 'urgency', 0.5),
+                'complexity': getattr(task, 'complexity', 0.5), 
+                'deadline': getattr(task, 'deadline', 10.0),
+                'type_encoding': getattr(task, 'type_encoding', 0.0)
+            }
+            
+            # Get action from shared agent
+            action = self.shared_static_uav_agent.select_action(local_state, task_info, explore=False)
+            
+            # Convert action to TaskDecision
+            if action == 'local':
+                return TaskDecision.LOCAL
+            elif action == 'dynamic':
+                return TaskDecision.DYNAMIC
+            elif action == 'satellite':
+                return TaskDecision.SATELLITE
+                
+    # Fall back to heuristic if no agent
     static_uav = self.uav_manager.static_uavs.get(static_uav_id)
-    region = self.regions[region_id]
-    
-    state = {
-        # Queue length at static UAV
-        'queue_length': static_uav.queue_length,
+    if static_uav:
+        available_dynamic_uavs = self.uav_manager.get_available_dynamic_uavs_in_region(region_id)
+        dynamic_uav_count = len(available_dynamic_uavs)
+        visible_satellites = self.satellite_constellation.find_visible_satellites(static_uav.position)
+        satellite_available = len(visible_satellites) > 0
         
-        # Residual energy
-        'residual_energy': static_uav.current_energy / static_uav.battery_capacity,
-        
-        # Number of dynamic UAVs in region
-        'dynamic_uavs': len(self.uav_manager.get_available_dynamic_uavs_in_region(region_id)),
-        
-        # Task intensity in region
-        'task_intensity': region.current_intensity,
-        
-        # Task properties
-        'task_size': task.data_size_in / 10.0,  # Normalized
-        'task_cycles': task.cpu_cycles / 1e9,   # Normalized
-        'task_urgency': max(0.0, 1.0 - (task.deadline - self.current_time) / 10.0)  # Normalized
-    }
-    
-    # Get action from agent
-    local_agent = self.local_agents[region_id]
-    
-    # Create task info dictionary for the agent
-    task_info = {
-        'data_size': task.data_size_in,
-        'cpu_cycles': task.cpu_cycles,
-        'deadline': task.deadline,
-        'priority': getattr(task, 'priority', 1.0)
-    }
-    
-    # Use state dictionary instead of array
-    action = local_agent.select_action(state, task_info, explore=False)
-    
-    # Convert action string to task decision
-    if action == 'local':
-        return TaskDecision.LOCAL
-    elif action == 'dynamic':
-        return TaskDecision.DYNAMIC
-    elif action == 'satellite':
-        return TaskDecision.SATELLITE
-    else:
-        # Default fallback
-        return TaskDecision.LOCAL
+        # Use heuristic decision
+        return static_uav.make_offloading_decision(
+            task, dynamic_uav_count, satellite_available, self.current_time
+        )
+    return TaskDecision.FAILED
 
 
 def _process_task_offloading_rl(self, verbose: bool = True) -> Dict[str, int]:

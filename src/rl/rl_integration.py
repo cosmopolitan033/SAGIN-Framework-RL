@@ -17,7 +17,7 @@ from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime
 import numpy as np
 
-from .agents import CentralAgent, LocalAgent
+from .agents import CentralAgent, LocalAgent, SharedStaticUAVAgent
 from .trainers import HierarchicalRLTrainer
 from .environment import SAGINRLEnvironment
 
@@ -67,13 +67,14 @@ class RLModelManager:
         print(f"✅ Registered model: {model_name}")
     
     def save_model(self, model_name: str, central_agent: CentralAgent, 
-                   local_agents: Dict[int, LocalAgent], model_info: Dict[str, Any]):
+                   shared_static_uav_agent: SharedStaticUAVAgent,
+                   model_info: Dict[str, Any]):
         """Save trained RL models.
         
         Args:
             model_name: Unique name for this model
             central_agent: Trained central agent
-            local_agents: Dictionary of trained local agents
+            shared_static_uav_agent: Shared agent for all static UAVs
             model_info: Model metadata and performance metrics
         """
         model_path = os.path.join(self.models_dir, model_name)
@@ -87,24 +88,22 @@ class RLModelManager:
             'training_losses': central_agent.training_losses
         }, central_path)
         
-        # Save local agents
-        local_agents_path = os.path.join(model_path, "local_agents")
-        os.makedirs(local_agents_path, exist_ok=True)
-        
-        for region_id, agent in local_agents.items():
-            agent_path = os.path.join(local_agents_path, f"agent_region_{region_id}.pth")
-            torch.save({
-                'state_dict': agent.network.state_dict(),
-                'config': agent.config,
-                'training_losses': agent.training_losses
-            }, agent_path)
+        # Save shared static UAV agent
+        shared_static_path = os.path.join(model_path, "shared_static_uav_agent.pth")
+        torch.save({
+            'state_dict': shared_static_uav_agent.network.state_dict(),
+            'config': shared_static_uav_agent.config,
+            'training_losses': shared_static_uav_agent.training_losses,
+            'usage_count': shared_static_uav_agent.usage_count
+        }, shared_static_path)
         
         # Save metadata
         metadata = {
             **model_info,
-            'num_regions': len(local_agents),
+            'architecture': 'central_plus_shared_static',
             'central_state_dim': central_agent.network.feature_extractor[0].in_features,
-            'central_action_dim': central_agent.network.actor_head[-2].out_features
+            'central_action_dim': central_agent.network.actor_head[-2].out_features,
+            'static_uav_usage_count': shared_static_uav_agent.usage_count
         }
         
         metadata_path = os.path.join(model_path, "metadata.json")
@@ -115,7 +114,7 @@ class RLModelManager:
         self.register_model(model_name, metadata)
         print(f"💾 Saved model: {model_name} to {model_path}")
     
-    def load_model(self, model_name: str, network) -> Tuple[CentralAgent, Dict[int, LocalAgent]]:
+    def load_model(self, model_name: str, network) -> Tuple[CentralAgent, SharedStaticUAVAgent]:
         """Load trained RL models.
         
         Args:
@@ -123,7 +122,7 @@ class RLModelManager:
             network: SAGIN network instance (for config inference)
             
         Returns:
-            Tuple of (central_agent, local_agents_dict)
+            Tuple of (central_agent, shared_static_uav_agent)
         """
         if model_name not in self.registry:
             raise ValueError(f"Model '{model_name}' not found in registry")
@@ -147,30 +146,24 @@ class RLModelManager:
         central_agent.network.load_state_dict(central_checkpoint['state_dict'])
         central_agent.training_losses = central_checkpoint['training_losses']
         
-        # Load local agents
-        local_agents = {}
-        local_agents_path = os.path.join(model_path, "local_agents")
+        # Load shared static UAV agent
+        shared_static_path = os.path.join(model_path, "shared_static_uav_agent.pth")
+        shared_static_checkpoint = torch.load(shared_static_path, map_location='cpu')
         
-        for region_id in range(1, metadata['num_regions'] + 1):
-            agent_path = os.path.join(local_agents_path, f"agent_region_{region_id}.pth")
-            if os.path.exists(agent_path):
-                agent_checkpoint = torch.load(agent_path, map_location='cpu')
-                
-                # Infer state dim from saved model
-                state_dim = agent_checkpoint['state_dict']['model.0.weight'].shape[1]
-                
-                agent = LocalAgent(
-                    region_id=region_id,
-                    state_dim=state_dim,
-                    action_space=['local', 'dynamic', 'satellite'],
-                    config=agent_checkpoint['config']
-                )
-                agent.network.load_state_dict(agent_checkpoint['state_dict'])
-                agent.training_losses = agent_checkpoint['training_losses']
-                local_agents[region_id] = agent
+        # Infer state dim from saved model
+        shared_state_dim = shared_static_checkpoint['state_dict']['model.0.weight'].shape[1]
+        
+        shared_static_uav_agent = SharedStaticUAVAgent(
+            state_dim=shared_state_dim,
+            action_space=['local', 'dynamic', 'satellite'],
+            config=shared_static_checkpoint['config']
+        )
+        shared_static_uav_agent.network.load_state_dict(shared_static_checkpoint['state_dict'])
+        shared_static_uav_agent.training_losses = shared_static_checkpoint['training_losses']
+        shared_static_uav_agent.usage_count = shared_static_checkpoint.get('usage_count', 0)
         
         print(f"📂 Loaded model: {model_name}")
-        return central_agent, local_agents
+        return central_agent, shared_static_uav_agent
     
     def list_models(self) -> List[Dict[str, Any]]:
         """List all available trained models."""

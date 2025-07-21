@@ -376,7 +376,7 @@ class SAGINDemo:
                 'episodes': episodes,
                 'training_time': training_time,
                 'performance': {
-                    'final_reward': training_stats.get('final_reward', 0.0),
+                    'final_reward': training_stats.get('final_average_reward', 0.0),
                     'success_rate': training_stats.get('success_rate', 0.0),
                     'avg_latency': training_stats.get('avg_latency', 0.0)
                 }
@@ -475,8 +475,13 @@ class SAGINDemo:
             else:
                 print("❌ Invalid choice. Please enter 0-3")
     
-    def run_simulation(self, config_name: str = "medium_demo"):
-        """Run simulation using the specified configuration."""
+    def run_simulation(self, config_name: str = "medium_demo", epochs: int = None):
+        """Run simulation using the specified configuration.
+        
+        Args:
+            config_name: Name of the configuration to use
+            epochs: Number of epochs to run (overrides config default if provided)
+        """
         print(f"🚀 SAGIN SIMULATION: {config_name.upper()}")
         print("="*60)
         
@@ -505,7 +510,10 @@ class SAGINDemo:
         
         network.initialize_simulation()
         
-        print(f"\nRunning {config.simulation.total_epochs}-epoch simulation with {config.simulation.logging_level} logging...")
+        # Use custom epochs if provided, otherwise use config default
+        simulation_epochs = epochs if epochs is not None else config.simulation.total_epochs
+        
+        print(f"\nRunning {simulation_epochs}-epoch simulation with {config.simulation.logging_level} logging...")
         
         # Track metrics
         self.metrics_history = []
@@ -535,11 +543,11 @@ class SAGINDemo:
         if config.simulation.detailed_interval > 0 and config.simulation.logging_level == "high":
             print(f"\n🔍 Running with detailed logging every {config.simulation.detailed_interval} epochs...")
             network.run_simulation_with_detailed_logging(
-                config.simulation.total_epochs, config.simulation.detailed_interval, progress_callback
+                simulation_epochs, config.simulation.detailed_interval, progress_callback
             )
         else:
             print(f"\n📊 Running standard simulation...")
-            network.run_simulation(config.simulation.total_epochs, progress_callback)
+            network.run_simulation(simulation_epochs, progress_callback)
         
         # Show detailed analysis
         if config.simulation.logging_level in ["medium", "high"]:
@@ -761,7 +769,15 @@ def main():
                     else:
                         config_name = selection
                     
-                    network = demo.run_simulation(config_name)
+                    # Ask for number of epochs
+                    try:
+                        epochs_input = input("Number of simulation epochs (press Enter for config default): ").strip()
+                        epochs = int(epochs_input) if epochs_input else None
+                    except ValueError:
+                        print("Invalid number, using config default")
+                        epochs = None
+                    
+                    network = demo.run_simulation(config_name, epochs)
                     demo.print_summary(network)
                     
                 except (ValueError, IndexError):

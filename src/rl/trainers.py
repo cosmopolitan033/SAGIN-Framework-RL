@@ -61,18 +61,8 @@ class HierarchicalRLTrainer:
             config.get('static_uav_agent_config', {})
         )
         
-        # Keep LocalAgents for backward compatibility (will be deprecated)
-        self.local_agents = {}
-        for region_id in network.regions.keys():
-            self.local_agents[region_id] = LocalAgent(
-                region_id,
-                local_state_dim,
-                self.action_space,
-                config.get('local_agent_config', {})
-            )
-        
         # Note: Dynamic UAVs do NOT need RL agents (they only compute, no offloading decisions)
-        # Remove SharedDynamicUAVAgent as it's not needed per the paper
+        # All static UAVs now share the single SharedStaticUAVAgent
         
         # Training parameters
         self.num_episodes = config.get('num_episodes', 1000)
@@ -82,10 +72,7 @@ class HierarchicalRLTrainer:
         # Performance tracking
         self.rewards_history = []
         self.central_losses = []
-        self.local_losses = {}
         self.static_uav_losses = []  # For shared static UAV agent
-        for region_id in network.regions.keys():
-            self.local_losses[region_id] = []
         
         # Results directory
         self.results_dir = config.get('results_dir', 'results')
@@ -197,7 +184,7 @@ class HierarchicalRLTrainer:
                 local_task_info = {}
                 
                 for region_id, task_ids in pending_tasks.items():
-                    if region_id in self.local_agents and task_ids:
+                    if task_ids:  # Use shared static UAV agent for all regions
                         local_state = self.env.get_local_state(region_id)
                         local_actions[region_id] = {}
                         local_task_info[region_id] = {}
@@ -208,13 +195,13 @@ class HierarchicalRLTrainer:
                             if task:
                                 task_info = {
                                     'data_size_in': task.data_size_in,
-                                    'workload': task.workload,
+                                    'workload': task.cpu_cycles,
                                     'deadline': task.deadline,
-                                    'priority': task.priority
+                                    'priority': 1.0  # Default priority since Task doesn't have this attribute
                                 }
                                 
-                                # Select action for this task
-                                action = self.local_agents[region_id].select_action(
+                                # Use shared static UAV agent for action selection
+                                action = self.shared_static_uav_agent.select_action(
                                     local_state, task_info
                                 )
                                 
@@ -231,7 +218,7 @@ class HierarchicalRLTrainer:
                         state, central_action, reward, next_state, done
                     )
                 
-                # Store experiences for local agents
+                # Store experiences for shared static UAV agent
                 for region_id, task_dict in local_actions.items():
                     local_state = self.env.get_local_state(region_id)
                     next_local_state = self.env.get_local_state(region_id)
@@ -239,8 +226,8 @@ class HierarchicalRLTrainer:
                     for task_id, action in task_dict.items():
                         if task_id in local_task_info[region_id]:
                             task_info = local_task_info[region_id][task_id]
-                            # We don't have next task info, so use same as current
-                            self.local_agents[region_id].store_experience(
+                            # Store experience in shared static UAV agent
+                            self.shared_static_uav_agent.store_experience(
                                 local_state, task_info, action, reward, 
                                 next_local_state, task_info, done
                             )
@@ -255,13 +242,6 @@ class HierarchicalRLTrainer:
             # Train central agent
             central_loss = self.central_agent.train()
             self.central_losses.append(central_loss)
-            
-            # Train local agents
-            local_losses = {}
-            for region_id, agent in self.local_agents.items():
-                local_loss = agent.train()
-                self.local_losses[region_id].append(local_loss)
-                local_losses[region_id] = local_loss
             
             # Train shared static UAV agent
             static_uav_loss = self.shared_static_uav_agent.train()
@@ -294,15 +274,20 @@ class HierarchicalRLTrainer:
             print(f"Training completed in {time.time() - start_time:.1f} seconds")
             print(f"Final average reward: {np.mean(self.rewards_history[-100:]):.2f}")
         
+        # Get final network performance metrics
+        final_metrics = self.env.network.metrics
+        
         # Return the trained agents and training statistics
         training_stats = {
             'rewards_history': self.rewards_history,
             'central_losses': self.central_losses,
-            'local_losses': self.local_losses,
             'static_uav_losses': self.static_uav_losses,
             'final_average_reward': np.mean(self.rewards_history[-100:]) if self.rewards_history else 0.0,
             'total_episodes': self.num_episodes,
-            'training_time': time.time() - start_time
+            'training_time': time.time() - start_time,
+            # Add final network performance metrics
+            'success_rate': final_metrics.success_rate,
+            'avg_latency': final_metrics.average_latency
         }
         
         return self.central_agent, self.shared_static_uav_agent, training_stats
@@ -324,16 +309,15 @@ class HierarchicalRLTrainer:
         # Save central agent
         self.central_agent.save(os.path.join(checkpoint_dir, "central_agent.pt"))
         
-        # Save local agents
-        for region_id, agent in self.local_agents.items():
-            agent.save(os.path.join(checkpoint_dir, f"local_agent_region_{region_id}.pt"))
+        # Save shared static UAV agent
+        self.shared_static_uav_agent.save(os.path.join(checkpoint_dir, "shared_static_uav_agent.pt"))
         
         # Save training history
         with open(os.path.join(checkpoint_dir, "training_history.json"), "w") as f:
             json.dump({
                 'rewards': self.rewards_history,
                 'central_losses': self.central_losses,
-                'local_losses': {k: v for k, v in self.local_losses.items()}
+                'static_uav_losses': self.static_uav_losses
             }, f)
     
     def plot_results(self):
@@ -358,16 +342,14 @@ class HierarchicalRLTrainer:
         plt.grid(True)
         plt.savefig(os.path.join(self.results_dir, f"central_losses_{timestamp}.png"))
         
-        # Plot local losses (sample regions)
+        # Plot static UAV agent losses
         plt.figure(figsize=(12, 6))
-        for region_id in list(self.local_losses.keys())[:5]:  # Plot first 5 regions
-            plt.plot(self.local_losses[region_id], label=f'Region {region_id}')
-        plt.title('Local Agent Losses')
+        plt.plot(self.static_uav_losses)
+        plt.title('Shared Static UAV Agent Losses')
         plt.xlabel('Episode')
         plt.ylabel('Loss')
-        plt.legend()
         plt.grid(True)
-        plt.savefig(os.path.join(self.results_dir, f"local_losses_{timestamp}.png"))
+        plt.savefig(os.path.join(self.results_dir, f"static_uav_losses_{timestamp}.png"))
     
     def evaluate(self, num_episodes: int = 10, render: bool = True) -> Dict[str, float]:
         """
@@ -415,7 +397,7 @@ class HierarchicalRLTrainer:
                 local_actions = {}
                 
                 for region_id, task_ids in pending_tasks.items():
-                    if region_id in self.local_agents and task_ids:
+                    if task_ids:  # Use shared static UAV agent for all regions
                         local_state = self.env.get_local_state(region_id)
                         local_actions[region_id] = {}
                         
@@ -425,13 +407,13 @@ class HierarchicalRLTrainer:
                             if task:
                                 task_info = {
                                     'data_size_in': task.data_size_in,
-                                    'workload': task.workload,
+                                    'workload': task.cpu_cycles,
                                     'deadline': task.deadline,
-                                    'priority': task.priority
+                                    'priority': 1.0  # Default priority since Task doesn't have this attribute
                                 }
                                 
-                                # Select action without exploration
-                                action = self.local_agents[region_id].select_action(
+                                # Select action without exploration using shared agent
+                                action = self.shared_static_uav_agent.select_action(
                                     local_state, task_info, explore=False
                                 )
                                 

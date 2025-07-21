@@ -660,8 +660,16 @@ class SharedStaticUAVAgent:
         
         for exp in batch:
             state_tensor = self.preprocess_state(exp['state'], exp['task_info'])
+            
+            # Skip this experience if state is None (no valid state representation)
+            if state_tensor is None:
+                continue
+                
             if exp['next_state'] is not None:
                 next_state_tensor = self.preprocess_state(exp['next_state'], exp['next_task_info'])
+                # If next_state preprocessing also returns None, create zeros
+                if next_state_tensor is None:
+                    next_state_tensor = torch.zeros_like(state_tensor)
             else:
                 next_state_tensor = torch.zeros_like(state_tensor)
             
@@ -670,6 +678,11 @@ class SharedStaticUAVAgent:
             action_indices.append(exp['action'])
             rewards.append(exp['reward'])
             dones.append(float(exp['done']))
+        
+        # Check if we have any valid experiences to train on
+        if len(state_tensors) == 0:
+            print("Warning: No valid experiences to train on, skipping training step")
+            return 0.0
         
         # Convert to tensors
         states = torch.stack(state_tensors)

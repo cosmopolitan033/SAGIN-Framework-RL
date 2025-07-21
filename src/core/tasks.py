@@ -403,8 +403,35 @@ class TaskManager:
         
         return tasks
     
+    def peek_tasks_for_region(self, region_id: int, max_tasks: int = 10) -> List[Task]:
+        """Peek at pending tasks for a region without removing them from queue."""
+        if region_id not in self.region_queues:
+            return []
+        
+        queue = self.region_queues[region_id]
+        tasks = []
+        
+        # Get a copy of the heap to peek at tasks without removing them
+        import copy
+        heap_copy = copy.copy(queue.heap)
+        
+        for _ in range(min(max_tasks, len(heap_copy))):
+            if heap_copy:
+                import heapq
+                _, _, task = heapq.heappop(heap_copy)
+                tasks.append(task)
+            else:
+                break
+        
+        return tasks
+    
     def mark_task_completed(self, task: Task):
         """Mark a task as completed."""
+        # Check if task is already completed to avoid double-counting
+        if task.id in self.completed_tasks:
+            print(f"DEBUG: Task {task.id} already marked as completed, skipping duplicate")
+            return
+            
         # Debug: Check completion_time before and after
         original_completion_time = task.completion_time
         
@@ -422,7 +449,7 @@ class TaskManager:
         if original_completion_time == 0.0:
             print(f"DEBUG: Task {task.id} marked completed but still has completion_time=0.0 (not set by UAV/satellite)")
         
-        # Update metrics
+        # Update metrics - only increment if this is the first time marking as completed
         self.metrics['total_completed'] += 1
         
         if task.completion_time > 0:
@@ -435,6 +462,11 @@ class TaskManager:
     
     def mark_task_failed(self, task: Task, reason: str = "unknown"):
         """Mark a task as failed."""
+        # Check if task is already failed to avoid double-counting
+        if task.id in self.failed_tasks:
+            print(f"DEBUG: Task {task.id} already marked as failed, skipping duplicate")
+            return
+            
         if task.deadline < task.completion_time:
             task.status = TaskStatus.DEADLINE_MISSED
             self.metrics['deadline_violations'] += 1

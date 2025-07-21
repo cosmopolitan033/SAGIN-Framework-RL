@@ -250,8 +250,8 @@ class SAGINRLEnvironment:
                     success = self.process_local_action(region_id, task_id, decision)
                     task_decisions[task_id] = success
         
-        # Step the network forward in time
-        step_results = self.network.step()
+        # Step the network forward in time (without processing tasks - RL controls that)
+        step_results = self.network.step(process_tasks=False)
         self.current_epoch += 1
         
         # Calculate reward
@@ -309,7 +309,7 @@ class SAGINRLEnvironment:
         pending_tasks = {}
         
         for region_id in self.network.regions.keys():
-            tasks = self.network.task_manager.get_tasks_for_region(region_id)
+            tasks = self.network.task_manager.peek_tasks_for_region(region_id)
             pending_tasks[region_id] = [task.id for task in tasks]
         
         return pending_tasks

@@ -256,8 +256,14 @@ class SAGINNetwork:
         print(f"Dynamic UAVs: {len(self.uav_manager.dynamic_uavs)}")
         print(f"Satellites: {len(self.satellite_constellation.satellites)}")
     
-    def step(self, dt: Optional[float] = None, verbose: bool = True) -> Dict[str, Any]:
-        """Execute one simulation step."""
+    def step(self, dt: Optional[float] = None, verbose: bool = True, process_tasks: bool = True) -> Dict[str, Any]:
+        """Execute one simulation step.
+        
+        Args:
+            dt: Time step duration
+            verbose: Whether to print detailed logs
+            process_tasks: Whether to process task offloading (set to False during RL training)
+        """
         if not self.is_running:
             return {}
         
@@ -446,9 +452,11 @@ class SAGINNetwork:
                 print(f"    No new tasks generated")
         
         # 5. Process task offloading decisions
-        if verbose:
-            print(f"  📋 Processing task offloading decisions...")
-        decisions_made = self._process_task_offloading(verbose)
+        decisions_made = {'local': 0, 'dynamic': 0, 'satellite': 0, 'failed': 0}
+        if process_tasks:
+            if verbose:
+                print(f"  📋 Processing task offloading decisions...")
+            decisions_made = self._process_task_offloading(verbose)
         step_results['decisions_made'] = decisions_made
         
         if verbose:
@@ -480,7 +488,7 @@ class SAGINNetwork:
         if verbose:
             # Calculate additional metrics
             total_tasks = self.metrics.total_tasks_generated
-            active_tasks = sum(len(self.task_manager.get_tasks_for_region(r, 100)) for r in self.regions.keys())
+            active_tasks = sum(len(self.task_manager.peek_tasks_for_region(r, 100)) for r in self.regions.keys())
             
             print(f"  📊 Epoch Summary:")
             print(f"    Success rate: {self.metrics.success_rate:.3f} ({self.metrics.total_tasks_completed}/{total_tasks})")

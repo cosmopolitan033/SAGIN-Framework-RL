@@ -41,8 +41,31 @@ class RLModelManager:
     def _load_registry(self) -> Dict[str, Any]:
         """Load the model registry."""
         if os.path.exists(self.registry_file):
-            with open(self.registry_file, 'r') as f:
-                return json.load(f)
+            try:
+                with open(self.registry_file, 'r') as f:
+                    registry = json.load(f)
+                    
+                # Validate registry structure
+                if not isinstance(registry, dict):
+                    print(f"⚠️ Warning: Model registry is not a valid dictionary, creating new one")
+                    return {}
+                    
+                # Filter out invalid entries
+                valid_registry = {}
+                for name, info in registry.items():
+                    if isinstance(info, dict):
+                        valid_registry[name] = info
+                    else:
+                        print(f"⚠️ Warning: Skipping invalid entry '{name}' in model registry")
+                        
+                return valid_registry
+                
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Warning: Model registry JSON is corrupted ({e}), creating new one")
+                return {}
+            except Exception as e:
+                print(f"⚠️ Warning: Error loading model registry ({e}), creating new one")
+                return {}
         return {}
     
     def _save_registry(self):
@@ -169,13 +192,22 @@ class RLModelManager:
         """List all available trained models."""
         models = []
         for name, info in self.registry.items():
-            models.append({
-                'name': name,
-                'description': info.get('description', 'No description'),
-                'timestamp': info.get('timestamp', 'Unknown'),
-                'performance': info.get('performance', {}),
-                'config': info.get('config', {})
-            })
+            try:
+                # Ensure info is a dictionary, not a string or other type
+                if not isinstance(info, dict):
+                    print(f"⚠️ Warning: Skipping malformed entry '{name}' in model registry")
+                    continue
+                    
+                models.append({
+                    'name': name,
+                    'description': info.get('description', 'No description'),
+                    'timestamp': info.get('timestamp', 'Unknown'),
+                    'performance': info.get('performance', {}),
+                    'config': info.get('config', {})
+                })
+            except Exception as e:
+                print(f"⚠️ Warning: Error processing model '{name}': {e}")
+                continue
         return sorted(models, key=lambda x: x['timestamp'], reverse=True)
     
     def interactive_model_selection(self) -> Optional[str]:

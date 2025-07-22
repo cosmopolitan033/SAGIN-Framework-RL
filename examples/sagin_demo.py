@@ -485,6 +485,9 @@ class SAGINDemo:
         print(f"🚀 SAGIN SIMULATION: {config_name.upper()}")
         print("="*60)
         
+        # Start timing
+        self._simulation_start_time = time.time()
+        
         # Create network with configuration
         network = self.create_network(config_name)
         config = self.current_config
@@ -530,7 +533,9 @@ class SAGINDemo:
                 'uav_utilization': metrics.uav_utilization,
                 'satellite_utilization': metrics.satellite_utilization,
                 'tasks_generated': metrics.total_tasks_generated,
-                'tasks_completed': metrics.total_tasks_completed
+                'tasks_completed': metrics.total_tasks_completed,
+                'energy_consumption': getattr(metrics, 'energy_consumption', 0.0),
+                'coverage_percentage': getattr(metrics, 'coverage_percentage', 100.0)
             })
             
             # Print progress only at intervals to avoid spam
@@ -548,6 +553,9 @@ class SAGINDemo:
         else:
             print(f"\n📊 Running standard simulation...")
             network.run_simulation(simulation_epochs, progress_callback)
+        
+        # Store simulation time
+        self._simulation_time = time.time() - self._simulation_start_time
         
         # Show detailed analysis
         if config.simulation.logging_level in ["medium", "high"]:
@@ -616,11 +624,14 @@ class SAGINDemo:
                   f"{region_info['dynamic_uav_count']} dynamic UAVs")
     
     def plot_results(self, network: SAGINNetwork):
-        """Plot comprehensive simulation results."""
+        """Plot comprehensive simulation results with detailed statistics."""
         if not self.metrics_history:
             print("No metrics history to plot")
             return
         
+        print(f"📊 Plotting {len(self.metrics_history)} data points from simulation...")
+        
+        # Extract data from metrics history
         epochs = [m['epoch'] for m in self.metrics_history]
         success_rates = [m['success_rate'] for m in self.metrics_history]
         avg_latencies = [m['average_latency'] for m in self.metrics_history]
@@ -628,83 +639,206 @@ class SAGINDemo:
         uav_utilizations = [m['uav_utilization'] for m in self.metrics_history]
         satellite_utilizations = [m['satellite_utilization'] for m in self.metrics_history]
         
-        print(f"📊 Plotting {len(epochs)} data points from simulation...")
+        # Create comprehensive figure with multiple subplots
+        fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        fig.suptitle(f'SAGIN {self.orchestration_mode.upper()} Simulation Results - {self.current_config.name} - {timestamp}', 
+                    fontsize=16, fontweight='bold')
         
-        # Create comprehensive plot
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        fig.suptitle(f'SAGIN Network Simulation Results: {self.current_config.name}\n'
-                    f'Orchestration: {self.orchestration_mode.upper()} '
-                    f'{"(Model: " + self.selected_rl_model + ")" if self.selected_rl_model else ""}', 
-                    fontsize=16)
+        # 1. Success Rate with moving average
+        ax1 = axes[0, 0]
+        ax1.plot(epochs, success_rates, alpha=0.6, color='blue', label='Success Rate')
         
-        # Plot metrics with improved styling
-        axes[0, 0].plot(epochs, success_rates, 'b-', linewidth=2, alpha=0.8)
-        axes[0, 0].set_title('Task Success Rate')
-        axes[0, 0].set_xlabel('Epoch')
-        axes[0, 0].set_ylabel('Success Rate')
-        axes[0, 0].grid(True, alpha=0.3)
-        axes[0, 0].set_ylim(0, 1)
+        # Add moving average (window=10)
+        if len(success_rates) > 10:
+            moving_avg = np.convolve(success_rates, np.ones(10)/10, mode='valid')
+            ax1.plot(epochs[9:], moving_avg, color='red', linewidth=2, label='Moving Average (10)')
         
-        axes[0, 1].plot(epochs, avg_latencies, 'r-', linewidth=2, alpha=0.8)
-        axes[0, 1].set_title('Average Task Latency')
-        axes[0, 1].set_xlabel('Epoch')
-        axes[0, 1].set_ylabel('Latency (s)')
-        axes[0, 1].grid(True, alpha=0.3)
+        ax1.set_title('Task Success Rate')
+        ax1.set_xlabel('Epoch')
+        ax1.set_ylabel('Success Rate')
+        ax1.grid(True, alpha=0.3)
+        ax1.set_ylim(0, 1)
+        ax1.legend()
         
-        axes[0, 2].plot(epochs, load_imbalances, 'g-', linewidth=2, alpha=0.8)
-        axes[0, 2].set_title('Load Imbalance')
-        axes[0, 2].set_xlabel('Epoch')
-        axes[0, 2].set_ylabel('Load Imbalance')
-        axes[0, 2].grid(True, alpha=0.3)
+        # Add statistics text
+        final_success = np.mean(success_rates[-100:]) if len(success_rates) >= 100 else np.mean(success_rates)
+        ax1.text(0.02, 0.98, f'Final Avg (100): {final_success:.3f}\nMax: {max(success_rates):.3f}\nMin: {min(success_rates):.3f}', 
+                transform=ax1.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
         
-        axes[1, 0].plot(epochs, uav_utilizations, 'm-', linewidth=2, alpha=0.8)
-        axes[1, 0].set_title('UAV Utilization')
-        axes[1, 0].set_xlabel('Epoch')
-        axes[1, 0].set_ylabel('Utilization')
-        axes[1, 0].grid(True, alpha=0.3)
-        axes[1, 0].set_ylim(0, 1)
+        # 2. Average Latency
+        ax2 = axes[0, 1]
+        ax2.plot(epochs, avg_latencies, color='red', linewidth=1.5)
+        ax2.set_title('Average Task Latency')
+        ax2.set_xlabel('Epoch')
+        ax2.set_ylabel('Latency (s)')
+        ax2.grid(True, alpha=0.3)
         
-        axes[1, 1].plot(epochs, satellite_utilizations, 'c-', linewidth=2, alpha=0.8)
-        axes[1, 1].set_title('Satellite Utilization')
-        axes[1, 1].set_xlabel('Epoch')
-        axes[1, 1].set_ylabel('Utilization')
-        axes[1, 1].grid(True, alpha=0.3)
-        axes[1, 1].set_ylim(0, 1)
+        # Add latency statistics
+        final_latency = np.mean(avg_latencies[-50:]) if len(avg_latencies) >= 50 else np.mean(avg_latencies)
+        ax2.text(0.02, 0.98, f'Final Avg (50): {final_latency:.3f}s\nMax: {max(avg_latencies):.3f}s\nMin: {min(avg_latencies):.3f}s', 
+                transform=ax2.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.8))
         
-        # Final performance summary
-        final_metrics = network.get_performance_summary()
+        # 3. Load Imbalance
+        ax3 = axes[0, 2]
+        ax3.plot(epochs, load_imbalances, color='green', linewidth=1.5)
+        ax3.set_title('Load Imbalance')
+        ax3.set_xlabel('Epoch')
+        ax3.set_ylabel('Load Imbalance')
+        ax3.grid(True, alpha=0.3)
         
-        # Get task type distribution
+        # Add load imbalance statistics
+        final_load = np.mean(load_imbalances[-50:]) if len(load_imbalances) >= 50 else np.mean(load_imbalances)
+        ax3.text(0.02, 0.98, f'Final Avg (50): {final_load:.3f}\nMax: {max(load_imbalances):.3f}\nMin: {min(load_imbalances):.3f}', 
+                transform=ax3.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
+        
+        # 4. Performance Trend Analysis
+        ax4 = axes[1, 0]
+        if len(success_rates) > 20:
+            # Calculate improvement rate over epochs
+            window = 20
+            improvement = []
+            for i in range(window, len(success_rates)):
+                recent_avg = np.mean(success_rates[i-window:i])
+                past_avg = np.mean(success_rates[max(0, i-2*window):i-window])
+                improvement.append(recent_avg - past_avg)
+            
+            ax4.plot(epochs[window:], improvement, color='purple', linewidth=2)
+            ax4.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+            ax4.set_title('Performance Improvement Trend')
+            ax4.set_xlabel('Epoch')
+            ax4.set_ylabel('Success Rate Improvement')
+            ax4.grid(True, alpha=0.3)
+            
+            # Add improvement statistics
+            recent_trend = np.mean(improvement[-20:]) if len(improvement) >= 20 else np.mean(improvement) if improvement else 0
+            positive_epochs = sum(1 for x in improvement if x > 0)
+            ax4.text(0.02, 0.98, f'Recent Trend: {recent_trend:.4f}\nPositive Epochs: {positive_epochs}/{len(improvement)}', 
+                    transform=ax4.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lavender', alpha=0.8))
+        else:
+            ax4.text(0.5, 0.5, 'Insufficient data\nfor trend analysis\n(need >20 epochs)', 
+                    transform=ax4.transAxes, ha='center', va='center', fontsize=12)
+            ax4.set_title('Performance Improvement Trend')
+        
+        # 5. Resource Utilization Comparison
+        ax5 = axes[1, 1]
+        ax5.plot(epochs, uav_utilizations, label='UAV Utilization', color='magenta', alpha=0.7)
+        ax5.plot(epochs, satellite_utilizations, label='Satellite Utilization', color='cyan', alpha=0.7)
+        ax5.set_title('Resource Utilization Comparison')
+        ax5.set_xlabel('Epoch')
+        ax5.set_ylabel('Utilization')
+        ax5.grid(True, alpha=0.3)
+        ax5.set_ylim(0, 1)
+        ax5.legend()
+        
+        # Calculate utilization efficiency
+        final_uav_util = np.mean(uav_utilizations[-50:]) if len(uav_utilizations) >= 50 else np.mean(uav_utilizations)
+        final_sat_util = np.mean(satellite_utilizations[-50:]) if len(satellite_utilizations) >= 50 else np.mean(satellite_utilizations)
+        ax5.text(0.02, 0.98, f'UAV Util: {final_uav_util:.3f}\nSat Util: {final_sat_util:.3f}\nBalance: {abs(final_uav_util-final_sat_util):.3f}', 
+                transform=ax5.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        
+        # 6. Comprehensive Summary Statistics
+        ax6 = axes[1, 2]
+        ax6.axis('off')  # Turn off axis for text display
+        
+        # Calculate comprehensive statistics
+        total_epochs = len(self.metrics_history)
+        simulation_time = getattr(self, '_simulation_time', 0)
+        
+        # Performance metrics
+        initial_performance = np.mean(success_rates[:10]) if len(success_rates) >= 10 else success_rates[0] if success_rates else 0
+        final_performance = np.mean(success_rates[-100:]) if len(success_rates) >= 100 else np.mean(success_rates)
+        improvement = final_performance - initial_performance
+        
+        # Stability analysis
+        if len(success_rates) >= 50:
+            stability = 1.0 / (1.0 + np.std(success_rates[-50:]))  # Higher is more stable
+        else:
+            stability = 0.5
+        
+        # Performance consistency
+        if len(success_rates) >= 20:
+            recent_variance = np.var(success_rates[-20:])
+            consistency = "High" if recent_variance < 0.01 else "Medium" if recent_variance < 0.05 else "Low"
+        else:
+            consistency = "Unknown"
+        
+        # Get final network metrics
+        final_metrics = network.get_performance_summary()['final_metrics']
+        
+        # Task type distribution
         task_stats = network.task_manager.task_generator.get_generation_statistics()
-        task_type_text = ""
-        if task_stats['by_type']:
-            total_tasks = task_stats['total_generated']
-            task_type_lines = []
-            for task_type, count in task_stats['by_type'].items():
-                if total_tasks > 0:
-                    percentage = (count / total_tasks) * 100
-                    task_type_name = task_type.value.replace('_', ' ').title()
-                    task_type_lines.append(f"{task_type_name}: {count} ({percentage:.1f}%)")
-            if task_type_lines:
-                task_type_text = "\n\nTask Type Distribution:\n" + "\n".join(task_type_lines)
+        task_diversity = len(task_stats['by_type']) if task_stats.get('by_type') else 0
         
-        final_text = f"""Final Performance:
-Tasks Generated: {final_metrics['final_metrics'].total_tasks_generated}
-Tasks Completed: {final_metrics['final_metrics'].total_tasks_completed}
-Success Rate: {final_metrics['final_metrics'].success_rate:.3f}
-Avg Latency: {final_metrics['final_metrics'].average_latency:.3f}s
-Load Imbalance: {final_metrics['final_metrics'].load_imbalance:.3f}
-UAV Utilization: {final_metrics['final_metrics'].uav_utilization:.3f}
-Satellite Utilization: {final_metrics['final_metrics'].satellite_utilization:.3f}
-Coverage: {final_metrics['final_metrics'].coverage_percentage:.1f}%{task_type_text}"""
+        summary_text = f"""SIMULATION SUMMARY
+════════════════════════
+Configuration: {self.current_config.name}
+Orchestration: {self.orchestration_mode.upper()}
+Total Epochs: {total_epochs}
+Simulation Time: {simulation_time:.1f}s
+Epochs/sec: {total_epochs/max(simulation_time, 1):.2f}
+
+PERFORMANCE METRICS
+═══════════════════════
+Initial Success Rate: {initial_performance:.3f}
+Final Success Rate: {final_performance:.3f}
+Performance Change: {improvement:+.3f}
+Stability Score: {stability:.3f}
+Consistency: {consistency}
+
+NETWORK PERFORMANCE
+══════════════════════
+Tasks Generated: {final_metrics.total_tasks_generated}
+Tasks Completed: {final_metrics.total_tasks_completed}
+Final Success Rate: {final_metrics.success_rate:.1%}
+Avg Latency: {final_metrics.average_latency:.3f}s
+Load Imbalance: {final_metrics.load_imbalance:.3f}
+
+RESOURCE EFFICIENCY
+══════════════════════
+UAV Utilization: {final_metrics.uav_utilization:.1%}
+Satellite Utilization: {final_metrics.satellite_utilization:.1%}
+Coverage: {final_metrics.coverage_percentage:.1f}%
+Task Diversity: {task_diversity} types
+
+OPTIMIZATION METRICS
+═══════════════════════
+Best Success Rate: {max(success_rates):.3f}
+Worst Success Rate: {min(success_rates):.3f}
+Best Latency: {min(avg_latencies):.3f}s
+Success Rate Range: {max(success_rates)-min(success_rates):.3f}
+"""
         
-        axes[1, 2].text(0.05, 0.95, final_text, transform=axes[1, 2].transAxes,
-                       verticalalignment='top', fontsize=10, family='monospace')
-        axes[1, 2].set_title('Final Performance Summary')
-        axes[1, 2].axis('off')
+        ax6.text(0.05, 0.95, summary_text, transform=ax6.transAxes, fontsize=9, 
+                verticalalignment='top', fontfamily='monospace',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
         
         plt.tight_layout()
+        
+        # Save comprehensive plot
+        results_dir = "results"
+        os.makedirs(results_dir, exist_ok=True)
+        comprehensive_filename = f"{results_dir}/comprehensive_{self.orchestration_mode}_results_{timestamp}.png"
+        plt.savefig(comprehensive_filename, dpi=300, bbox_inches='tight')
+        print(f"💾 Comprehensive results saved to: {comprehensive_filename}")
+        
         plt.show()
+        plt.close()  # Close instead of showing
+        
+        # Print final summary to console
+        print(f"\n🎯 FINAL SIMULATION SUMMARY")
+        print("="*60)
+        print(f"Configuration: {self.current_config.name}")
+        print(f"Orchestration: {self.orchestration_mode.upper()}")
+        print(f"Total Epochs: {total_epochs}")
+        print(f"Simulation Time: {simulation_time:.2f} seconds")
+        print(f"Performance Change: {improvement:+.3f} (from {initial_performance:.3f} to {final_performance:.3f})")
+        print(f"Final Success Rate: {final_metrics.success_rate:.1%}")
+        print(f"Final Average Latency: {final_metrics.average_latency:.3f}s")
+        print(f"Resource Utilization: UAV {final_metrics.uav_utilization:.1%}, Satellite {final_metrics.satellite_utilization:.1%}")
+        print(f"Stability Score: {stability:.3f}/1.0")
+        print(f"Performance Consistency: {consistency}")
+        print("="*60)
     
     def export_results(self, network: SAGINNetwork):
         """Export simulation results."""

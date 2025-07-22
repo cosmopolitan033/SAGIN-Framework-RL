@@ -267,6 +267,9 @@ class HierarchicalRLTrainer:
         # Final checkpoint
         self.save_checkpoints(self.num_episodes, final=True)
         
+        # Store training time for statistics
+        self._training_time = time.time() - start_time
+        
         # Plot and save results
         self.plot_results()
         
@@ -321,9 +324,184 @@ class HierarchicalRLTrainer:
             }, f)
     
     def plot_results(self):
-        """Plot and save training results."""
+        """Plot and save comprehensive training results with statistics."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
+        # Create a comprehensive figure with multiple subplots
+        fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+        fig.suptitle(f'SAGIN RL Training Results - {timestamp}', fontsize=16, fontweight='bold')
+        
+        # 1. Episode Rewards with moving average
+        ax1 = axes[0, 0]
+        episodes = range(1, len(self.rewards_history) + 1)
+        ax1.plot(episodes, self.rewards_history, alpha=0.6, color='blue', label='Episode Reward')
+        
+        # Add moving average (window=10)
+        if len(self.rewards_history) > 10:
+            moving_avg = np.convolve(self.rewards_history, np.ones(10)/10, mode='valid')
+            ax1.plot(range(10, len(self.rewards_history) + 1), moving_avg, 
+                    color='red', linewidth=2, label='Moving Average (10)')
+        
+        ax1.set_title('Episode Rewards')
+        ax1.set_xlabel('Episode')
+        ax1.set_ylabel('Reward')
+        ax1.grid(True, alpha=0.3)
+        ax1.legend()
+        
+        # Add statistics text
+        final_avg = np.mean(self.rewards_history[-100:]) if len(self.rewards_history) >= 100 else np.mean(self.rewards_history)
+        ax1.text(0.02, 0.98, f'Final Avg (100): {final_avg:.2f}\nMax: {max(self.rewards_history):.2f}\nMin: {min(self.rewards_history):.2f}', 
+                transform=ax1.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        # 2. Central Agent Losses
+        ax2 = axes[0, 1]
+        ax2.plot(episodes, self.central_losses, color='green', linewidth=1.5)
+        ax2.set_title('Central Agent Training Loss')
+        ax2.set_xlabel('Episode')
+        ax2.set_ylabel('Loss')
+        ax2.grid(True, alpha=0.3)
+        
+        # Add loss statistics
+        final_loss = np.mean(self.central_losses[-50:]) if len(self.central_losses) >= 50 else np.mean(self.central_losses)
+        ax2.text(0.02, 0.98, f'Final Avg (50): {final_loss:.4f}\nMax: {max(self.central_losses):.4f}\nMin: {min(self.central_losses):.4f}', 
+                transform=ax2.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
+        
+        # 3. Static UAV Agent Losses
+        ax3 = axes[0, 2]
+        ax3.plot(episodes, self.static_uav_losses, color='orange', linewidth=1.5)
+        ax3.set_title('Static UAV Agent Training Loss')
+        ax3.set_xlabel('Episode')
+        ax3.set_ylabel('Loss')
+        ax3.grid(True, alpha=0.3)
+        
+        # Add loss statistics
+        final_uav_loss = np.mean(self.static_uav_losses[-50:]) if len(self.static_uav_losses) >= 50 else np.mean(self.static_uav_losses)
+        ax3.text(0.02, 0.98, f'Final Avg (50): {final_uav_loss:.4f}\nMax: {max(self.static_uav_losses):.4f}\nMin: {min(self.static_uav_losses):.4f}', 
+                transform=ax3.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='moccasin', alpha=0.8))
+        
+        # 4. Learning Progress (Reward Improvement)
+        ax4 = axes[1, 0]
+        if len(self.rewards_history) > 20:
+            # Calculate improvement rate over episodes
+            window = 20
+            improvement = []
+            for i in range(window, len(self.rewards_history)):
+                recent_avg = np.mean(self.rewards_history[i-window:i])
+                past_avg = np.mean(self.rewards_history[max(0, i-2*window):i-window])
+                improvement.append(recent_avg - past_avg)
+            
+            ax4.plot(range(window+1, len(self.rewards_history) + 1), improvement, color='purple', linewidth=2)
+            ax4.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+            ax4.set_title('Learning Progress (Reward Improvement)')
+            ax4.set_xlabel('Episode')
+            ax4.set_ylabel('Reward Improvement')
+            ax4.grid(True, alpha=0.3)
+            
+            # Add improvement statistics
+            recent_improvement = np.mean(improvement[-20:]) if len(improvement) >= 20 else np.mean(improvement)
+            ax4.text(0.02, 0.98, f'Recent Trend: {recent_improvement:.2f}\nPositive Episodes: {sum(1 for x in improvement if x > 0)}/{len(improvement)}', 
+                    transform=ax4.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lavender', alpha=0.8))
+        else:
+            ax4.text(0.5, 0.5, 'Insufficient data\nfor progress analysis\n(need >20 episodes)', 
+                    transform=ax4.transAxes, ha='center', va='center', fontsize=12)
+            ax4.set_title('Learning Progress')
+        
+        # 5. Loss Convergence Analysis
+        ax5 = axes[1, 1]
+        # Combine both losses for convergence analysis
+        if len(self.central_losses) > 10 and len(self.static_uav_losses) > 10:
+            # Normalize losses to [0,1] for comparison
+            norm_central = (np.array(self.central_losses) - np.min(self.central_losses)) / (np.max(self.central_losses) - np.min(self.central_losses) + 1e-8)
+            norm_static = (np.array(self.static_uav_losses) - np.min(self.static_uav_losses)) / (np.max(self.static_uav_losses) - np.min(self.static_uav_losses) + 1e-8)
+            
+            ax5.plot(episodes, norm_central, label='Central Agent (normalized)', color='green', alpha=0.7)
+            ax5.plot(episodes, norm_static, label='Static UAV Agent (normalized)', color='orange', alpha=0.7)
+            ax5.set_title('Loss Convergence Analysis')
+            ax5.set_xlabel('Episode')
+            ax5.set_ylabel('Normalized Loss')
+            ax5.grid(True, alpha=0.3)
+            ax5.legend()
+            
+            # Calculate convergence metrics
+            central_variance = np.var(norm_central[-50:]) if len(norm_central) >= 50 else np.var(norm_central)
+            static_variance = np.var(norm_static[-50:]) if len(norm_static) >= 50 else np.var(norm_static)
+            ax5.text(0.02, 0.98, f'Central Variance: {central_variance:.4f}\nStatic Variance: {static_variance:.4f}\nConvergence: {"Good" if max(central_variance, static_variance) < 0.01 else "Poor"}', 
+                    transform=ax5.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        else:
+            ax5.text(0.5, 0.5, 'Insufficient data\nfor convergence analysis', 
+                    transform=ax5.transAxes, ha='center', va='center', fontsize=12)
+            ax5.set_title('Loss Convergence Analysis')
+        
+        # 6. Training Summary Statistics
+        ax6 = axes[1, 2]
+        ax6.axis('off')  # Turn off axis for text display
+        
+        # Calculate comprehensive statistics
+        total_episodes = len(self.rewards_history)
+        training_time = getattr(self, '_training_time', 0)  # Will be set in train() method
+        
+        # Performance metrics
+        final_performance = np.mean(self.rewards_history[-100:]) if len(self.rewards_history) >= 100 else np.mean(self.rewards_history)
+        initial_performance = np.mean(self.rewards_history[:10]) if len(self.rewards_history) >= 10 else self.rewards_history[0] if self.rewards_history else 0
+        improvement = final_performance - initial_performance
+        
+        # Learning stability
+        if len(self.rewards_history) >= 50:
+            stability = 1.0 / (1.0 + np.std(self.rewards_history[-50:]))  # Higher is more stable
+        else:
+            stability = 0.5
+        
+        # Convergence indicators
+        central_converged = len(self.central_losses) > 50 and np.std(self.central_losses[-20:]) < np.std(self.central_losses[-50:-20])
+        static_converged = len(self.static_uav_losses) > 50 and np.std(self.static_uav_losses[-20:]) < np.std(self.static_uav_losses[-50:-20])
+        
+        # Get final network metrics if available
+        final_metrics = self.env.network.metrics
+        
+        summary_text = f"""TRAINING SUMMARY
+════════════════════════
+Episodes: {total_episodes}
+Training Time: {training_time:.1f}s
+Episodes/sec: {total_episodes/max(training_time, 1):.2f}
+
+PERFORMANCE METRICS
+═══════════════════════
+Initial Reward: {initial_performance:.2f}
+Final Reward: {final_performance:.2f}
+Improvement: {improvement:+.2f}
+Stability Score: {stability:.3f}
+
+NETWORK PERFORMANCE
+══════════════════════
+Success Rate: {final_metrics.success_rate:.1%}
+Avg Latency: {final_metrics.average_latency:.3f}s
+Tasks Completed: {final_metrics.total_tasks_completed}
+Tasks Failed: {final_metrics.total_tasks_failed}
+
+CONVERGENCE STATUS
+═════════════════════
+Central Agent: {"✓ Converged" if central_converged else "⚠ Training"}
+Static UAV Agent: {"✓ Converged" if static_converged else "⚠ Training"}
+
+LOSS STATISTICS
+══════════════════
+Central Loss (final): {self.central_losses[-1]:.4f}
+Static Loss (final): {self.static_uav_losses[-1]:.4f}
+Central Loss Trend: {np.mean(self.central_losses[-10:]) - np.mean(self.central_losses[-20:-10]):.4f}
+Static Loss Trend: {np.mean(self.static_uav_losses[-10:]) - np.mean(self.static_uav_losses[-20:-10]):.4f}
+"""
+        
+        ax6.text(0.05, 0.95, summary_text, transform=ax6.transAxes, fontsize=10, 
+                verticalalignment='top', fontfamily='monospace',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.results_dir, f"comprehensive_results_{timestamp}.png"), 
+                   dpi=300, bbox_inches='tight')
+        plt.show()
+        plt.close()
+        
+        # Save individual plots for backward compatibility
         # Plot rewards
         plt.figure(figsize=(12, 6))
         plt.plot(self.rewards_history)
@@ -332,6 +510,7 @@ class HierarchicalRLTrainer:
         plt.ylabel('Reward')
         plt.grid(True)
         plt.savefig(os.path.join(self.results_dir, f"rewards_{timestamp}.png"))
+        plt.close()
         
         # Plot central losses
         plt.figure(figsize=(12, 6))
@@ -341,6 +520,7 @@ class HierarchicalRLTrainer:
         plt.ylabel('Loss')
         plt.grid(True)
         plt.savefig(os.path.join(self.results_dir, f"central_losses_{timestamp}.png"))
+        plt.close()
         
         # Plot static UAV agent losses
         plt.figure(figsize=(12, 6))
@@ -350,6 +530,7 @@ class HierarchicalRLTrainer:
         plt.ylabel('Loss')
         plt.grid(True)
         plt.savefig(os.path.join(self.results_dir, f"static_uav_losses_{timestamp}.png"))
+        plt.close()
     
     def evaluate(self, num_episodes: int = 10, render: bool = True) -> Dict[str, float]:
         """

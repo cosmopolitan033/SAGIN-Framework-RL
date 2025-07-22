@@ -7,7 +7,7 @@ to provide states, process actions, and calculate rewards as described in the pa
 
 import numpy as np
 from typing import Dict, List, Tuple, Any, Optional
-from ..core.types import TaskDecision
+from ..core.types import TaskDecision, Position
 from ..core.network import SAGINNetwork
 
 
@@ -94,66 +94,54 @@ class SAGINRLEnvironment:
     
     def get_local_state(self, region_id: int) -> Dict[str, Any]:
         """
-        Get the local state for a static UAV in a given region as defined in the paper:
-        s^local_{r,t} = (Q_r(t), E_{v^stat_r}(t), N^dyn_r(t), Λ_r(t))
+        Get the local state for a specific region (for SharedStaticUAVAgent).
         
         Args:
-            region_id: ID of the region for which to get the local state
+            region_id: The ID of the region
             
         Returns:
-            Dictionary containing the local state components
+            Dictionary containing the local state for the region
         """
         network_state = self.network.get_network_state()
         
-        # Find the static UAV for this region
-        static_uav_id = None
-        static_uav_info = None
-        for uav_id, uav_info in network_state['uav_states'].get('static_uavs', {}).items():
-            if uav_info.get('assigned_region_id') == region_id:
-                static_uav_id = uav_id
-                static_uav_info = uav_info
-                break
+        # Static UAVs are nested under uav_states
+        uav_states = network_state.get('uav_states', {})
+        static_uavs = uav_states.get('static_uavs', {})
         
-        if not static_uav_info:
-            return None  # No static UAV in this region
+        # Find static UAV assigned to this region
+        static_uav = static_uavs.get(region_id)
         
-        # Current task queue
-        task_queue = static_uav_info.get('task_queue', [])
+        if not static_uav:
+            return None
         
-        # Residual energy
-        residual_energy = static_uav_info.get('energy_level', 0.0)
-        
-        # Number of available dynamic UAVs in this region
-        available_dynamic_uavs = 0
-        for uav_id, uav_info in network_state['uav_states'].get('dynamic_uavs', {}).items():
-            if (uav_info.get('status') == 'available' and 
-                uav_info.get('current_region_id') == region_id):
-                available_dynamic_uavs += 1
-        
-        # Current task intensity in the region
-        region_info = network_state['regions'].get(region_id, {})
-        task_intensity = region_info.get('current_intensity', 0.0)
-        
-        return {
-            'task_queue': task_queue,
-            'queue_length': static_uav_info.get('queue_length', 0),
-            'residual_energy': residual_energy,
-            'available_dynamic_uavs': available_dynamic_uavs,
-            'task_intensity': task_intensity,
-            'region_id': region_id,
-            'static_uav_id': static_uav_id
+        # Extract required information
+        local_state = {
+            'queue_length': static_uav.get('queue_length', 0),
+            'residual_energy': static_uav.get('energy_percentage', 100.0) / 100.0,
+            'available_dynamic_uavs': uav_states.get('total_dynamic_available', 0),
+            'task_intensity': len(network_state.get('regions', {}).get(region_id, {}).get('tasks', []))
         }
+        
+        return local_state
     
     def process_central_action(self, action: Dict[int, int]) -> None:
         """
-        Process actions from the central agent to allocate dynamic UAVs to regions.
+        Process central agent's dynamic UAV allocation action.
         
         Args:
             action: Dictionary mapping dynamic UAV IDs to target region IDs
         """
         # Apply dynamic UAV allocations through the network
         for uav_id, target_region_id in action.items():
-            self.network.uav_manager.assign_dynamic_uav_to_region(uav_id, target_region_id)
+            # Get region center for the target region
+            row, col = self.network.grid.get_grid_position(target_region_id)
+            center_x, center_y = self.network.grid.get_region_center(row, col)
+            region_center = Position(center_x, center_y, self.network.system_params.dynamic_uav_altitude)
+            current_time = self.network.current_time
+            
+            self.network.uav_manager.assign_dynamic_uav(
+                uav_id, target_region_id, region_center, current_time
+            )
     
     def process_local_action(self, region_id: int, task_id: str, decision: str) -> bool:
         """
@@ -187,7 +175,7 @@ class SAGINRLEnvironment:
     def calculate_reward(self, task_decisions: Dict[str, bool], 
                         load_imbalance: float = None) -> float:
         """
-        Calculate the reward as defined in the paper:
+        Calculate the reward as defined in the paper with improvements:
         r_t = sum_j[I(T_total,j ≤ τ_j)] - α_1 * ΔL_t - α_2 * sum_v[I(E_v(t) < E_min)]
         
         Args:
@@ -197,28 +185,70 @@ class SAGINRLEnvironment:
         Returns:
             The calculated reward value
         """
-        # Task completion reward
-        task_completion_reward = sum(1 for success in task_decisions.values() if success)
+        # Task completion reward (scaled up to make positive rewards more significant)
+        total_tasks = len(task_decisions)
+        successful_tasks = sum(1 for success in task_decisions.values() if success)
         
-        # Load imbalance penalty
+        if total_tasks > 0:
+            success_rate = successful_tasks / total_tasks
+            # Give higher reward for high success rates, scaled by number of tasks
+            task_completion_reward = success_rate * 100 + successful_tasks * 10
+        else:
+            # Small positive reward for stable operation even without tasks
+            task_completion_reward = 1.0
+        
+        # Load imbalance penalty (reduce impact to avoid overly negative rewards)
         if load_imbalance is None:
             load_imbalance = self.network.metrics.load_imbalance
-        load_imbalance_penalty = self.alpha_1 * load_imbalance
+        # Scale down the penalty and add baseline
+        load_imbalance_penalty = self.alpha_1 * min(load_imbalance, 10.0)  # Cap penalty
         
-        # Energy threshold violations penalty
+        # Energy threshold violations penalty (reduce impact)
         energy_violations = 0
+        total_uavs = 0
+        
         for uav_id, uav in self.network.uav_manager.static_uavs.items():
+            total_uavs += 1
             if uav.current_energy < self.E_min:
                 energy_violations += 1
         
         for uav_id, uav in self.network.uav_manager.dynamic_uavs.items():
+            total_uavs += 1
             if uav.current_energy < self.E_min:
                 energy_violations += 1
         
-        energy_penalty = self.alpha_2 * energy_violations
+        # Scale energy penalty based on percentage of violations
+        if total_uavs > 0:
+            energy_violation_rate = energy_violations / total_uavs
+            energy_penalty = self.alpha_2 * energy_violation_rate * 50  # Moderate penalty
+        else:
+            energy_penalty = 0
         
-        # Total reward
-        reward = task_completion_reward - load_imbalance_penalty - energy_penalty
+        # Network efficiency bonus (encourage good network state)
+        efficiency_bonus = 0
+        if hasattr(self.network.metrics, 'coverage_percentage'):
+            coverage = getattr(self.network.metrics, 'coverage_percentage', 100)
+            efficiency_bonus = (coverage / 100.0) * 10  # Up to 10 bonus points
+        
+        # Latency bonus (encourage low latency)
+        latency_bonus = 0
+        if hasattr(self.network.metrics, 'average_latency'):
+            avg_latency = getattr(self.network.metrics, 'average_latency', 0)
+            if avg_latency > 0:
+                # Inverse relationship: lower latency = higher bonus
+                latency_bonus = max(0, 20 - avg_latency)  # Up to 20 bonus points
+        
+        # Total reward with positive baseline
+        base_reward = 10.0  # Ensure some positive baseline
+        reward = (base_reward + task_completion_reward + efficiency_bonus + latency_bonus 
+                 - load_imbalance_penalty - energy_penalty)
+        
+        # Debug info for training (can be removed later)
+        if hasattr(self, '_debug_rewards') and self._debug_rewards:
+            print(f"  Reward breakdown: Base={base_reward:.1f}, Tasks={task_completion_reward:.1f}, "
+                  f"Efficiency={efficiency_bonus:.1f}, Latency={latency_bonus:.1f}, "
+                  f"LoadPenalty={load_imbalance_penalty:.1f}, EnergyPenalty={energy_penalty:.1f}, "
+                  f"Total={reward:.1f}")
         
         # Track the reward
         self.total_reward += reward

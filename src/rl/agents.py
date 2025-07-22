@@ -9,6 +9,7 @@ import numpy as np
 import random
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from typing import Dict, List, Tuple, Any, Optional
 from collections import deque, namedtuple
@@ -37,6 +38,8 @@ class CentralAgent:
             config: Configuration parameters
         """
         self.config = config
+        self.state_dim = state_dim
+        self.action_dim = action_dim
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Create actor-critic network for the central agent
@@ -136,15 +139,32 @@ class CentralAgent:
         with torch.no_grad():
             action_probs = self.network.actor(state_tensor.unsqueeze(0)).cpu().numpy()[0]
         
-        # For each UAV, select a region based on the policy
-        actions = {}
-        reshaped_probs = action_probs.reshape(len(available_uavs), len(regions))
+        # The action_probs represents probabilities for all possible (UAV, region) pairs
+        # Action space is structured as: [uav0_region0, uav0_region1, ..., uav1_region0, uav1_region1, ...]
         
-        for i, uav_id in enumerate(available_uavs):
-            if i < reshaped_probs.shape[0]:
-                # Select region index based on probability distribution
-                region_idx = np.random.choice(len(regions), p=softmax(reshaped_probs[i]))
-                actions[uav_id] = regions[region_idx]
+        # Get all dynamic UAVs and regions for context
+        all_dynamic_uavs = list(range(len(state.get('dynamic_uav_positions', {}))))
+        num_regions = len(regions)
+        
+        # For each available UAV, select a region based on the policy
+        actions = {}
+        for uav_id in available_uavs:
+            if uav_id < len(all_dynamic_uavs):
+                # Calculate the start index for this UAV's action probabilities
+                start_idx = uav_id * num_regions
+                end_idx = start_idx + num_regions
+                
+                # Extract probabilities for this UAV's region assignments
+                if end_idx <= len(action_probs):
+                    uav_probs = action_probs[start_idx:end_idx]
+                    # Normalize to ensure valid probability distribution
+                    uav_probs = softmax(uav_probs)
+                    # Select region index based on probability distribution
+                    region_idx = np.random.choice(len(regions), p=uav_probs)
+                    actions[uav_id] = regions[region_idx]
+                else:
+                    # Fallback: random assignment if action space mismatch
+                    actions[uav_id] = random.choice(regions)
         
         return actions
     
@@ -159,61 +179,97 @@ class CentralAgent:
         
         # Sample random batch from replay buffer
         batch = random.sample(self.replay_buffer, self.batch_size)
-        state_batch = torch.cat([self.preprocess_state(e.state).unsqueeze(0) for e in batch])
         
-        # Process actions (needs custom logic based on action representation)
-        action_indices = []
+        # Process batch data
+        states = []
+        actions = []
+        rewards = []
+        next_states = []
+        dones = []
+        
         for e in batch:
-            # Convert actions to indices in the action space
-            # This depends on how actions are represented and action space is structured
-            pass
+            state_tensor = self.preprocess_state(e.state)
+            if state_tensor is not None:
+                states.append(state_tensor)
+                next_states.append(self.preprocess_state(e.next_state))
+                
+                # Convert action to tensor format
+                # Assuming e.action is a dictionary mapping UAV IDs to region assignments
+                if isinstance(e.action, dict):
+                    # Create action vector: for each UAV, which region it's assigned to
+                    action_vector = torch.zeros(self.action_dim)
+                    for uav_id, region_id in e.action.items():
+                        if isinstance(uav_id, int) and isinstance(region_id, int):
+                            # Map (uav_id, region_id) to action index
+                            action_idx = uav_id * 16 + region_id  # Assuming 16 regions max
+                            if action_idx < self.action_dim:
+                                action_vector[action_idx] = 1.0
+                    actions.append(action_vector)
+                else:
+                    # Fallback: create zero action
+                    actions.append(torch.zeros(self.action_dim))
+                
+                rewards.append(e.reward)
+                dones.append(float(e.done))
         
-        action_batch = torch.LongTensor(action_indices).to(self.device)
-        reward_batch = torch.FloatTensor([e.reward for e in batch]).to(self.device)
-        next_state_batch = torch.cat([self.preprocess_state(e.next_state).unsqueeze(0) for e in batch])
-        done_batch = torch.FloatTensor([float(e.done) for e in batch]).to(self.device)
+        if len(states) == 0:
+            return 0.0  # No valid experiences
         
-        # Compute target Q-values
-        with torch.no_grad():
-            # Get values from target critic network
-            next_values = self.target_network.critic(next_state_batch)
-            target_values = reward_batch + self.gamma * next_values * (1 - done_batch)
+        # Convert to tensors
+        state_batch = torch.stack(states)
+        action_batch = torch.stack(actions)
+        reward_batch = torch.FloatTensor(rewards).to(self.device)
+        next_state_batch = torch.stack(next_states) if next_states[0] is not None else state_batch
+        done_batch = torch.FloatTensor(dones).to(self.device)
         
-        # Get current values from network
-        values = self.network.critic(state_batch)
-        
-        # Compute value loss (MSE)
-        value_loss = nn.MSELoss()(values, target_values)
-        
-        # Get actor loss
-        policy_probs = self.network.actor(state_batch)
-        log_probs = torch.log(policy_probs + 1e-10)  # Add small constant to avoid log(0)
-        
-        # Compute advantage (simple version)
-        advantage = (target_values - values).detach()
-        
-        # Compute policy loss (using policy gradient)
-        policy_loss = -torch.mean(torch.sum(log_probs * action_batch, dim=1) * advantage)
-        
-        # Total loss is weighted sum of value and policy losses
-        total_loss = value_loss + policy_loss
-        
-        # Optimize
+        # Train the network using REINFORCE (Policy Gradient)
         self.optimizer.zero_grad()
+        
+        # Get action probabilities and state values from current policy
+        network_output = self.network(state_batch)
+        if isinstance(network_output, tuple):
+            action_probs, state_values = network_output
+        else:
+            action_probs = network_output
+            state_values = None
+        
+        # Calculate log probabilities for taken actions
+        # For continuous action space, use action_batch directly
+        log_probs = torch.log(torch.clamp(action_probs, min=1e-10))
+        selected_log_probs = torch.sum(log_probs * action_batch, dim=1)
+        
+        # Simple policy gradient loss (REINFORCE)
+        policy_loss = -torch.mean(selected_log_probs * reward_batch)
+        
+        # If we have critic values, we can use actor-critic instead of REINFORCE
+        if state_values is not None:
+            # Calculate advantage (simplified - using reward directly)
+            advantages = reward_batch - state_values.squeeze()
+            
+            # Actor loss (policy gradient with advantage)
+            actor_loss = -torch.mean(selected_log_probs * advantages.detach())
+            
+            # Critic loss (value function approximation)
+            critic_loss = F.mse_loss(state_values.squeeze(), reward_batch)
+            
+            # Combined loss
+            total_loss = actor_loss + 0.5 * critic_loss
+        else:
+            # Pure policy gradient (REINFORCE)
+            total_loss = policy_loss
+        
+        # Backpropagate
         total_loss.backward()
+        
+        # Gradient clipping to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
+        
         self.optimizer.step()
         
-        # Soft update target network
-        self._update_target_network(self.tau)
-        
-        # Decay exploration rate
+        # Update exploration parameters
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
         
-        # Track loss
-        loss_value = total_loss.item()
-        self.training_losses.append(loss_value)
-        
-        return loss_value
+        return total_loss.item()
     
     def _update_target_network(self, tau: float):
         """
@@ -404,7 +460,10 @@ class LocalAgent:
             Loss value from training
         """
         if len(self.experiences) < batch_size:
+            print(f"Static Agent: Not enough experiences ({len(self.experiences)} < {batch_size})")
             return 0.0  # Not enough experiences
+        
+        print(f"Static Agent: Training with {len(self.experiences)} experiences, batch_size={batch_size}")
         
         # Sample random batch
         batch = random.sample(self.experiences, batch_size)

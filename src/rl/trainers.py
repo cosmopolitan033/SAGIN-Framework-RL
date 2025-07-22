@@ -64,10 +64,17 @@ class HierarchicalRLTrainer:
         # Note: Dynamic UAVs do NOT need RL agents (they only compute, no offloading decisions)
         # All static UAVs now share the single SharedStaticUAVAgent
         
-        # Training parameters
+        # Training parameters with improved defaults
         self.num_episodes = config.get('num_episodes', 1000)
         self.max_steps_per_episode = config.get('max_steps_per_episode', 100)
         self.central_update_frequency = config.get('central_update_frequency', 5)
+        
+        # Enable reward debugging for training
+        self.env._debug_rewards = config.get('debug_rewards', True)
+        
+        # Training improvements with better defaults
+        self.warmup_episodes = config.get('warmup_episodes', 10)  # Reduced warmup period
+        self.train_frequency = config.get('train_frequency', 2)  # Train more frequently
         
         # Performance tracking
         self.rewards_history = []
@@ -165,7 +172,7 @@ class HierarchicalRLTrainer:
                 available_uavs = [
                     uav_id for uav_id, info in 
                     network_state['uav_states'].get('dynamic_uavs', {}).items()
-                    if info.get('status') == 'available'
+                    if info.get('is_available', False)
                 ]
                 regions = list(network_state['regions'].keys())
                 
@@ -223,6 +230,9 @@ class HierarchicalRLTrainer:
                     local_state = self.env.get_local_state(region_id)
                     next_local_state = self.env.get_local_state(region_id)
                     
+                    if local_state is None:
+                        continue  # Skip if no static UAV in this region
+                    
                     for task_id, action in task_dict.items():
                         if task_id in local_task_info[region_id]:
                             task_info = local_task_info[region_id][task_id]
@@ -239,26 +249,48 @@ class HierarchicalRLTrainer:
                 if done:
                     break
             
-            # Train central agent
-            central_loss = self.central_agent.train()
+            # Train agents (only after warmup period and at specified frequency)
+            if episode > self.warmup_episodes and episode % self.train_frequency == 0:
+                central_loss = self.central_agent.train()
+                # Use a reasonable batch size for static agent training
+                static_batch_size = self.shared_static_uav_agent.config.get('batch_size', 32)
+                static_uav_loss = self.shared_static_uav_agent.train(static_batch_size)
+            else:
+                # During warmup, just collect experiences
+                central_loss = 0.0
+                static_uav_loss = 0.0
+                
             self.central_losses.append(central_loss)
-            
-            # Train shared static UAV agent
-            static_uav_loss = self.shared_static_uav_agent.train()
             self.static_uav_losses.append(static_uav_loss)
             
             # Record episode reward
             self.rewards_history.append(episode_reward)
             
-            # Print progress
+            # Print progress with debugging info
             if verbose and (episode % 10 == 0 or episode == 1):
                 elapsed = time.time() - start_time
                 avg_reward = np.mean(self.rewards_history[-10:]) if episode > 10 else episode_reward
                 
+                # Debug information
+                central_buffer_size = len(self.central_agent.replay_buffer)
+                static_buffer_size = len(self.shared_static_uav_agent.experiences)
+                
                 print(f"Episode {episode}/{self.num_episodes} [{elapsed:.1f}s] - "
                       f"Reward: {episode_reward:.2f}, "
                       f"Avg Reward: {avg_reward:.2f}, "
-                      f"Central Loss: {central_loss:.4f}")
+                      f"Central Loss: {central_loss:.4f}, "
+                      f"Static Loss: {static_uav_loss:.4f}")
+                print(f"  Buffer sizes - Central: {central_buffer_size}, Static: {static_buffer_size}")
+                
+                # Additional debugging for first few episodes
+                if episode <= 30:
+                    print(f"  Central epsilon: {self.central_agent.epsilon:.3f}, "
+                          f"Static epsilon: {self.shared_static_uav_agent.epsilon:.3f}")
+                    
+                    # Check if we're getting any positive rewards
+                    recent_rewards = self.rewards_history[-10:] if len(self.rewards_history) >= 10 else self.rewards_history
+                    positive_rewards = sum(1 for r in recent_rewards if r > 0)
+                    print(f"  Positive rewards in last 10 episodes: {positive_rewards}/10")
             
             # Save checkpoints periodically
             if episode % 100 == 0:
@@ -560,7 +592,7 @@ Static Loss Trend: {np.mean(self.static_uav_losses[-10:]) - np.mean(self.static_
                 available_uavs = [
                     uav_id for uav_id, info in 
                     network_state['uav_states'].get('dynamic_uavs', {}).items()
-                    if info.get('status') == 'available'
+                    if info.get('is_available', False)
                 ]
                 regions = list(network_state['regions'].keys())
                 

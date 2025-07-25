@@ -865,8 +865,51 @@ class SAGINNetwork:
         self.metrics = NetworkMetrics()
         self.metrics_history = []
         
-        # Reset all components
+        # FOCUSED RESET: Reset only accumulated state, not components
+        # Reset task manager completely (this creates new instance)
         self.task_manager = TaskManager(self.system_params)
+        
+        # Reset UAV states but keep the UAV instances
+        for uav_id, uav in self.uav_manager.static_uavs.items():
+            # Reset energy to full
+            uav.current_energy = uav.battery_capacity
+            
+            # Clear task processing state
+            if hasattr(uav, 'task_queue'):
+                uav.task_queue.clear()
+            if hasattr(uav, 'processing_tasks'):
+                uav.processing_tasks.clear()
+            if hasattr(uav, 'completed_tasks'):
+                uav.completed_tasks.clear()
+            uav.current_workload = 0.0
+            
+            # Reset status
+            uav.status = uav.status.__class__.ACTIVE
+                
+        for uav_id, uav in self.uav_manager.dynamic_uavs.items():
+            # Reset energy to full
+            uav.current_energy = uav.battery_capacity
+            
+            # Clear task processing state
+            if hasattr(uav, 'task_queue'):
+                uav.task_queue.clear()
+            if hasattr(uav, 'processing_tasks'):
+                uav.processing_tasks.clear()
+            if hasattr(uav, 'completed_tasks'):
+                uav.completed_tasks.clear()
+            uav.current_workload = 0.0
+            
+            # Reset status
+            uav.status = uav.status.__class__.ACTIVE
+        
+        # Reset satellite states but keep satellite instances
+        for satellite_id, satellite in self.satellite_constellation.satellites.items():
+            # Clear satellite workload accumulation
+            satellite.current_workload = 0.0
+            if hasattr(satellite, 'processing_tasks'):
+                satellite.processing_tasks.clear()
+            if hasattr(satellite, 'task_queue'):
+                satellite.task_queue.clear()
         
         # Re-initialize
         self.initialize_simulation()

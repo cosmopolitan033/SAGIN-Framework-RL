@@ -22,27 +22,35 @@ class SAGINRLEnvironment:
     - Transition dynamics through the underlying SAGIN network
     """
     
-    def __init__(self, network: SAGINNetwork, config: Dict[str, Any]):
+    def __init__(self, sagin_network, config=None, alpha_1=None, alpha_2=None, episodes=1000, visualize=False):
         """
-        Initialize the RL environment.
+        Initialize the hierarchical SAGIN RL environment.
         
         Args:
-            network: The SAGIN network instance
-            config: Configuration parameters including reward weights
+            sagin_network: The SAGIN network instance
+            config: Configuration dictionary (legacy) or None
+            alpha_1: Load imbalance penalty weight (default: 0.1)
+            alpha_2: Energy penalty weight (default: 0.0 - energy doesn't matter!)
+            episodes: Number of training episodes
+            visualize: Whether to enable visualization
         """
-        self.network = network
-        self.config = config
+        self.network = sagin_network
         
-        # Reward function weights
-        self.alpha_1 = config.get('load_imbalance_weight', 0.5)
-        self.alpha_2 = config.get('energy_penalty_weight', 1.0)
+        # Handle both old config pattern and new explicit parameters
+        if config is not None:
+            # Legacy config pattern
+            self.alpha_1 = config.get('alpha_1', 0.1)
+            self.alpha_2 = config.get('alpha_2', 0.0)  # ZERO energy penalty by default
+        else:
+            # New explicit parameter pattern
+            self.alpha_1 = alpha_1 if alpha_1 is not None else 0.1
+            self.alpha_2 = alpha_2 if alpha_2 is not None else 0.0  # ZERO energy penalty by default
         
         # Minimum energy threshold from paper
-        self.E_min = config.get('min_energy_threshold', 
-                               self.network.system_params.min_energy_threshold)
+        self.E_min = getattr(sagin_network, 'min_energy_threshold', 0.1)
         
         # Timing parameters
-        self.central_action_interval = config.get('central_action_interval', 5)
+        self.central_action_interval = 5
         self.current_epoch = 0
         
         # Performance tracking
@@ -175,7 +183,7 @@ class SAGINRLEnvironment:
     def calculate_reward(self, task_decisions: Dict[str, bool], 
                         load_imbalance: float = None) -> float:
         """
-        Calculate the reward as defined in the paper with improvements:
+        Calculate the reward as defined in the paper with COMPLETELY REBALANCED components:
         r_t = sum_j[I(T_total,j ≤ τ_j)] - α_1 * ΔL_t - α_2 * sum_v[I(E_v(t) < E_min)]
         
         Args:
@@ -183,27 +191,28 @@ class SAGINRLEnvironment:
             load_imbalance: The load imbalance metric (if not provided, will be calculated)
             
         Returns:
-            The calculated reward value
+            The calculated reward value (normalized to [-10, +10] range)
         """
-        # Task completion reward (scaled up to make positive rewards more significant)
+        # Task completion reward (main positive signal) - NORMALIZED
         total_tasks = len(task_decisions)
         successful_tasks = sum(1 for success in task_decisions.values() if success)
         
         if total_tasks > 0:
             success_rate = successful_tasks / total_tasks
-            # Give higher reward for high success rates, scaled by number of tasks
-            task_completion_reward = success_rate * 100 + successful_tasks * 10
+            # Normalize to [0, 5] range: high success = positive reward
+            task_completion_reward = success_rate * 5.0
         else:
-            # Small positive reward for stable operation even without tasks
-            task_completion_reward = 1.0
+            # Neutral reward when no tasks (avoid artificial inflation)
+            task_completion_reward = 0.0
         
-        # Load imbalance penalty (reduce impact to avoid overly negative rewards)
+        # Load imbalance penalty - NORMALIZED to [-2, 0] range
         if load_imbalance is None:
             load_imbalance = self.network.metrics.load_imbalance
-        # Scale down the penalty and add baseline
-        load_imbalance_penalty = self.alpha_1 * min(load_imbalance, 10.0)  # Cap penalty
+        # Normalize load imbalance to reasonable penalty
+        normalized_load_penalty = min(load_imbalance / 10.0, 2.0)  # Max 2 point penalty
+        load_imbalance_penalty = self.alpha_1 * normalized_load_penalty
         
-        # Energy threshold violations penalty (reduce impact)
+        # Energy violations penalty - NORMALIZED to [-2, 0] range
         energy_violations = 0
         total_uavs = 0
         
@@ -217,35 +226,37 @@ class SAGINRLEnvironment:
             if uav.current_energy < self.E_min:
                 energy_violations += 1
         
-        # Scale energy penalty based on percentage of violations
+        # Normalize energy penalty to max 2 points
         if total_uavs > 0:
             energy_violation_rate = energy_violations / total_uavs
-            energy_penalty = self.alpha_2 * energy_violation_rate * 50  # Moderate penalty
+            energy_penalty = self.alpha_2 * energy_violation_rate * 2.0  # Max 2 point penalty
         else:
             energy_penalty = 0
         
-        # Network efficiency bonus (encourage good network state)
+        # Network efficiency bonus - NORMALIZED to [0, 2] range
         efficiency_bonus = 0
         if hasattr(self.network.metrics, 'coverage_percentage'):
             coverage = getattr(self.network.metrics, 'coverage_percentage', 100)
-            efficiency_bonus = (coverage / 100.0) * 10  # Up to 10 bonus points
+            efficiency_bonus = (coverage / 100.0) * 2.0  # Max 2 bonus points
         
-        # Latency bonus (encourage low latency)
+        # Latency bonus - NORMALIZED to [0, 1] range
         latency_bonus = 0
         if hasattr(self.network.metrics, 'average_latency'):
             avg_latency = getattr(self.network.metrics, 'average_latency', 0)
             if avg_latency > 0:
-                # Inverse relationship: lower latency = higher bonus
-                latency_bonus = max(0, 20 - avg_latency)  # Up to 20 bonus points
+                # Normalize latency: good latency (<5) gets bonus
+                latency_bonus = max(0, min(1.0, (5 - avg_latency) / 5.0))
         
-        # Total reward with positive baseline
-        base_reward = 10.0  # Ensure some positive baseline
-        reward = (base_reward + task_completion_reward + efficiency_bonus + latency_bonus 
+        # BALANCED reward calculation
+        # Positive components: task_completion (0-5) + efficiency (0-2) + latency (0-1) = [0, 8]
+        # Negative components: load_penalty (0-2) + energy_penalty (0-2) = [0, 4]  
+        # Final range: approximately [-4, +8] with positive bias for good performance
+        reward = (task_completion_reward + efficiency_bonus + latency_bonus 
                  - load_imbalance_penalty - energy_penalty)
         
         # Debug info for training (can be removed later)
         if hasattr(self, '_debug_rewards') and self._debug_rewards:
-            print(f"  Reward breakdown: Base={base_reward:.1f}, Tasks={task_completion_reward:.1f}, "
+            print(f"  Reward breakdown: Tasks={task_completion_reward:.1f}, "
                   f"Efficiency={efficiency_bonus:.1f}, Latency={latency_bonus:.1f}, "
                   f"LoadPenalty={load_imbalance_penalty:.1f}, EnergyPenalty={energy_penalty:.1f}, "
                   f"Total={reward:.1f}")
@@ -320,13 +331,36 @@ class SAGINRLEnvironment:
         Returns:
             Initial global state
         """
+        # COMPLETE NETWORK RESET: Fixed to eliminate cyclic pattern
         self.network.reset_simulation()
+        
+        # Reset RL environment tracking (only need this since network does the rest)
         self.current_epoch = 0
         self.total_reward = 0.0
         self.episode_rewards = []
         self.completed_tasks = 0
         self.failed_tasks = 0
         
+        return self.get_global_state()
+    
+    def reset_episode_only(self) -> Dict[str, Any]:
+        """
+        Reset only episode-level tracking WITHOUT reinitializing the network.
+        This is the KEY fix for eliminating cyclic patterns.
+        
+        Returns:
+            Current global state
+        """
+        # CRITICAL: Do NOT call self.network.reset_simulation() here!
+        # Network stays initialized, only reset RL episode tracking
+        
+        self.current_epoch = 0
+        self.total_reward = 0.0
+        self.episode_rewards = []
+        self.completed_tasks = 0
+        self.failed_tasks = 0
+        
+        # Return current state without network reset
         return self.get_global_state()
     
     def get_pending_tasks_by_region(self) -> Dict[int, List[str]]:

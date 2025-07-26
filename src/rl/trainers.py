@@ -37,37 +37,16 @@ class HierarchicalRLTrainer:
         """
         self.config = config
         
-        # Create environment
-        self.env = SAGINRLEnvironment(network, config.get('env_config', {}))
-        
-        # Create central agent
-        central_state_dim = self._estimate_central_state_dim(network)
-        central_action_dim = self._estimate_central_action_dim(network)
-        
-        self.central_agent = CentralAgent(
-            central_state_dim,
-            central_action_dim,
-            config.get('central_agent_config', {})
-        )
-        
-        # Create shared static UAV agent (replaces per-region local agents)
-        # According to the paper: all static UAVs share one RL model
-        self.action_space = ['local', 'dynamic', 'satellite']
-        local_state_dim = self._estimate_local_state_dim()
-        
-        self.shared_static_uav_agent = SharedStaticUAVAgent(
-            local_state_dim,
-            self.action_space,
-            config.get('static_uav_agent_config', {})
-        )
-        
-        # Note: Dynamic UAVs do NOT need RL agents (they only compute, no offloading decisions)
-        # All static UAVs now share the single SharedStaticUAVAgent
-        
         # Training parameters with improved defaults
         self.num_episodes = config.get('num_episodes', 1000)
         self.max_steps_per_episode = config.get('max_steps_per_episode', 100)
         self.central_update_frequency = config.get('central_update_frequency', 5)
+        
+        # 🎯 CRITICAL FIX: Sync episode length with environment
+        # Pass the episode length to environment for consistency
+        env_config = config.get('env_config', {})
+        env_config['max_epochs_per_episode'] = self.max_steps_per_episode
+        self.env = SAGINRLEnvironment(network, env_config)
         
         # Enable reward debugging for training
         self.env._debug_rewards = config.get('debug_rewards', True)
@@ -84,6 +63,60 @@ class HierarchicalRLTrainer:
         # Results directory
         self.results_dir = config.get('results_dir', 'results')
         os.makedirs(self.results_dir, exist_ok=True)
+        
+        # 🎯 CRITICAL FIX: Initialize the RL agents
+        self._initialize_agents(network, config)
+        
+    def _initialize_agents(self, network: SAGINNetwork, config: Dict[str, Any]):
+        """
+        Initialize the RL agents for hierarchical training.
+        
+        Args:
+            network: The SAGIN network instance
+            config: Configuration parameters
+        """
+        # Estimate state and action dimensions
+        central_state_dim = self._estimate_central_state_dim(network)
+        central_action_dim = self._estimate_central_action_dim(network)
+        local_state_dim = self._estimate_local_state_dim()
+        
+        # Central agent configuration
+        central_config = config.get('central_agent', {})
+        central_config.setdefault('state_dim', central_state_dim)
+        central_config.setdefault('action_dim', central_action_dim)
+        central_config.setdefault('learning_rate', 0.001)
+        central_config.setdefault('gamma', 0.99)
+        central_config.setdefault('epsilon_start', 1.0)
+        central_config.setdefault('epsilon_end', 0.1)
+        central_config.setdefault('epsilon_decay', 0.995)
+        central_config.setdefault('memory_size', 10000)
+        central_config.setdefault('batch_size', 32)
+        
+        # Initialize central agent
+        self.central_agent = CentralAgent(
+            state_dim=central_config['state_dim'],
+            action_dim=central_config['action_dim'],
+            config=central_config
+        )
+        
+        # Shared static UAV agent configuration  
+        static_config = config.get('static_uav_agent', {})
+        static_config.setdefault('state_dim', local_state_dim)
+        static_config.setdefault('learning_rate', 0.001)
+        static_config.setdefault('gamma', 0.99)
+        static_config.setdefault('epsilon_start', 1.0)
+        static_config.setdefault('epsilon_end', 0.1)
+        static_config.setdefault('epsilon_decay', 0.995)
+        static_config.setdefault('memory_size', 10000)
+        static_config.setdefault('batch_size', 32)
+        
+        # Initialize shared static UAV agent with action space
+        action_space = ['local', 'dynamic', 'satellite']
+        self.shared_static_uav_agent = SharedStaticUAVAgent(
+            state_dim=static_config['state_dim'],
+            action_space=action_space,
+            config=static_config
+        )
         
     def _estimate_central_state_dim(self, network: SAGINNetwork) -> int:
         """
@@ -160,10 +193,14 @@ class HierarchicalRLTrainer:
             print(f"Starting training for {self.num_episodes} episodes...")
             
         for episode in range(1, self.num_episodes + 1):
-            episode_reward = 0
+            episode_reward = 0  # Track total reward for this episode
             state = self.env.reset()
             
-            for step in range(1, self.max_steps_per_episode + 1):
+            # 🎯 CRITICAL FIX: Run until environment signals episode completion
+            step = 0
+            while True:
+                step += 1
+                
                 # Determine if central action should be taken this step
                 take_central_action = (step % self.central_update_frequency == 0)
                 
@@ -260,8 +297,14 @@ class HierarchicalRLTrainer:
                 # Update state
                 state = next_state
                 
-                # Break if episode is done
+                # 🎯 CRITICAL FIX: Break when environment signals episode completion
                 if done:
+                    print(f"  🏁 Episode {episode} completed after {step} steps with total reward {episode_reward:.1f}")
+                    break
+                    
+                # Safety check: prevent infinite loops
+                if step >= self.max_steps_per_episode * 2:  # Double the expected length as safety
+                    print(f"  ⚠️  Episode {episode} forced termination after {step} steps")
                     break
             
             # Train agents (only after warmup period and at specified frequency)
@@ -274,6 +317,10 @@ class HierarchicalRLTrainer:
                 # During warmup, just collect experiences
                 central_loss = 0.0
                 static_uav_loss = 0.0
+            
+            # 🎯 CRITICAL FIX: Call end_episode() for proper epsilon decay
+            self.central_agent.end_episode()
+            self.shared_static_uav_agent.end_episode()
                 
             self.central_losses.append(central_loss)
             self.static_uav_losses.append(static_uav_loss)

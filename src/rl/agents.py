@@ -266,10 +266,16 @@ class CentralAgent:
         
         self.optimizer.step()
         
-        # Update exploration parameters
-        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+        # 🎯 REMOVED: Epsilon decay moved to end_episode() method
         
         return total_loss.item()
+    
+    def end_episode(self):
+        """
+        Called at the end of each episode to update exploration parameters.
+        🎯 CRITICAL FIX: Epsilon should decay once per episode, not per training batch.
+        """
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
     
     def _update_target_network(self, tau: float):
         """
@@ -509,14 +515,20 @@ class LocalAgent:
         loss.backward()
         self.optimizer.step()
         
-        # Decay exploration rate
-        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+        # 🎯 REMOVED: Epsilon decay moved to end_episode() method
         
         # Track loss
         loss_value = loss.item()
         self.training_losses.append(loss_value)
         
         return loss_value
+    
+    def end_episode(self):
+        """
+        Called at the end of each episode to update exploration parameters.
+        🎯 CRITICAL FIX: Epsilon should decay once per episode, not per training batch.
+        """
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
     
     def save(self, path: str):
         """Save agent model to disk."""
@@ -804,6 +816,16 @@ class SharedStaticUAVAgent:
             'average_loss': np.mean(self.training_losses[-100:]) if self.training_losses else 0.0,
             'exploration_rate': self.epsilon
         }
+    
+    def end_episode(self):
+        """
+        Called at the end of each episode to update exploration rate.
+        
+        This method handles episode-level cleanup and parameter updates
+        for the shared static UAV agent.
+        """
+        # Update exploration rate (epsilon decay)
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
 
 class SharedDynamicUAVAgent:

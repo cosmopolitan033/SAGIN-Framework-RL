@@ -215,6 +215,21 @@ class HierarchicalRLTrainer:
                                 local_actions[region_id][task_id] = action
                                 local_task_info[region_id][task_id] = task_info
                 
+                # DEBUG: Print actions to debug fluctuating rewards
+                if episode <= 2 or episode % 20 == 0:  # First 3 episodes + every 20th episode
+                    if step <= 2:  # First 3 steps
+                        print(f"EPISODE {episode}, STEP {step}:")
+                        print(f"  🎯 Central action: {central_action}")
+                        print(f"  🎯 Local actions: {local_actions}")
+                        print(f"  📊 Available UAVs: {available_uavs}")
+                        print(f"  📋 Pending tasks: {len(sum(pending_tasks.values(), []))}")
+                        
+                        # Check if actions are empty
+                        if not central_action and not local_actions:
+                            print("  🚨 PROBLEM: BOTH ACTIONS ARE EMPTY!")
+                        elif central_action or local_actions:
+                            print("  ✅ GOOD: Agents making real decisions!")
+                
                 # Take step in environment with both central and local actions
                 next_state, reward, done, info = self.env.step(central_action, local_actions)
                 episode_reward += reward

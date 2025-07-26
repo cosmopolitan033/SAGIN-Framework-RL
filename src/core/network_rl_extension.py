@@ -70,10 +70,10 @@ def get_task_offloading_decision_rl(self, task, static_uav_id: int, region_id: i
             dynamic_uav_count = len(available_dynamic_uavs)
             
             local_state = {
-                'queue_length': static_uav.task_queue.qsize(),
-                'residual_energy': static_uav.energy,
+                'queue_length': len(static_uav.task_queue),  # Fixed: task_queue is a list, not a Queue
+                'residual_energy': static_uav.current_energy / static_uav.battery_capacity,  # Fixed: use current_energy and normalize
                 'available_dynamic_uavs': dynamic_uav_count,
-                'task_intensity': len(self.pending_tasks.get(region_id, []))
+                'task_intensity': len(self.task_manager.peek_tasks_for_region(region_id, max_tasks=10))  # Fixed: use task_manager
             }
             
             task_info = {

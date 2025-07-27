@@ -296,6 +296,10 @@ class SAGINRLEnvironment:
         min_reward = 10.0 + (learning_progress * 90.0)  # 10 → 100 minimum
         final_reward = max(final_reward, min_reward)
         
+        # 🔧 AGGRESSIVE STABILITY: Much lower reward cap for stable training
+        max_reward = 1000.0  # REDUCED from 5000 to 1000 for better stability
+        final_reward = min(final_reward, max_reward)
+        
         # 🎯 BEAUTIFUL DEBUG OUTPUT for tracking progression
         if hasattr(self, '_debug_rewards') and self._debug_rewards:
             print(f"  🚀 PROGRESSIVE Reward (Episode {current_episode+1}): "

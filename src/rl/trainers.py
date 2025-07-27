@@ -84,7 +84,7 @@ class HierarchicalRLTrainer:
         central_config = config.get('central_agent', {})
         central_config.setdefault('state_dim', central_state_dim)
         central_config.setdefault('action_dim', central_action_dim)
-        central_config.setdefault('learning_rate', 0.001)
+        central_config.setdefault('learning_rate', 0.0001)  # 🔧 REDUCED: 0.001 → 0.0001 for stability
         central_config.setdefault('gamma', 0.99)
         central_config.setdefault('epsilon_start', 1.0)
         central_config.setdefault('epsilon_end', 0.1)
@@ -102,7 +102,7 @@ class HierarchicalRLTrainer:
         # Shared static UAV agent configuration  
         static_config = config.get('static_uav_agent', {})
         static_config.setdefault('state_dim', local_state_dim)
-        static_config.setdefault('learning_rate', 0.001)
+        static_config.setdefault('learning_rate', 0.0001)  # 🔧 REDUCED: 0.001 → 0.0001 for stability
         static_config.setdefault('gamma', 0.99)
         static_config.setdefault('epsilon_start', 1.0)
         static_config.setdefault('epsilon_end', 0.1)

@@ -639,181 +639,294 @@ class SAGINDemo:
         uav_utilizations = [m['uav_utilization'] for m in self.metrics_history]
         satellite_utilizations = [m['satellite_utilization'] for m in self.metrics_history]
         
-        # Create comprehensive figure with multiple subplots
-        fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+        # Create optimized figure with comprehensive layout - METRICS + CONFIG + SUMMARY + UAV TIMELINE
+        fig = plt.figure(figsize=(24, 16))
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        fig.suptitle(f'SAGIN {self.orchestration_mode.upper()} Simulation Results - {self.current_config.name} - {timestamp}', 
-                    fontsize=16, fontweight='bold')
+        fig.suptitle(f'SAGIN {self.orchestration_mode.upper()} Performance Analysis - {self.current_config.name} - {timestamp}', 
+                    fontsize=20, fontweight='bold', y=0.96)
         
-        # 1. Success Rate with moving average
-        ax1 = axes[0, 0]
-        ax1.plot(epochs, success_rates, alpha=0.6, color='blue', label='Success Rate')
+        # Create enhanced grid layout: 2x2 metrics + config panel + UAV timeline
+        gs = fig.add_gridspec(3, 6, height_ratios=[1, 1, 0.8], hspace=0.35, wspace=0.3)
+        
+        # 1. Success Rate with moving average (top-left)
+        ax1 = fig.add_subplot(gs[0, 0:3])
+        ax1.plot(epochs, success_rates, alpha=0.7, color='blue', linewidth=1.5, label='Success Rate')
         
         # Add moving average (window=10)
         if len(success_rates) > 10:
             moving_avg = np.convolve(success_rates, np.ones(10)/10, mode='valid')
             ax1.plot(epochs[9:], moving_avg, color='red', linewidth=2, label='Moving Average (10)')
         
-        ax1.set_title('Task Success Rate')
+        ax1.set_title('Task Success Rate', fontsize=14, fontweight='bold')
         ax1.set_xlabel('Epoch')
         ax1.set_ylabel('Success Rate')
         ax1.grid(True, alpha=0.3)
         ax1.set_ylim(0, 1)
         ax1.legend()
         
-        # Add statistics text
+        # Add compact statistics text
         final_success = np.mean(success_rates[-100:]) if len(success_rates) >= 100 else np.mean(success_rates)
-        ax1.text(0.02, 0.98, f'Final Avg (100): {final_success:.3f}\nMax: {max(success_rates):.3f}\nMin: {min(success_rates):.3f}', 
-                transform=ax1.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        ax1.text(0.98, 0.98, f'Final: {final_success:.3f} | Max: {max(success_rates):.3f} | Min: {min(success_rates):.3f}', 
+                transform=ax1.transAxes, verticalalignment='top', horizontalalignment='right', 
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8), fontsize=10)
         
-        # 2. Average Latency
-        ax2 = axes[0, 1]
-        ax2.plot(epochs, avg_latencies, color='red', linewidth=1.5)
-        ax2.set_title('Average Task Latency')
+        # 2. Average Latency (top-right)
+        ax2 = fig.add_subplot(gs[0, 3:6])
+        ax2.plot(epochs, avg_latencies, color='red', linewidth=2)
+        ax2.set_title('Average Task Latency', fontsize=14, fontweight='bold')
         ax2.set_xlabel('Epoch')
         ax2.set_ylabel('Latency (s)')
         ax2.grid(True, alpha=0.3)
         
-        # Add latency statistics
+        # Add compact latency statistics
         final_latency = np.mean(avg_latencies[-50:]) if len(avg_latencies) >= 50 else np.mean(avg_latencies)
-        ax2.text(0.02, 0.98, f'Final Avg (50): {final_latency:.3f}s\nMax: {max(avg_latencies):.3f}s\nMin: {min(avg_latencies):.3f}s', 
-                transform=ax2.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.8))
+        ax2.text(0.98, 0.98, f'Final: {final_latency:.3f}s | Max: {max(avg_latencies):.3f}s | Min: {min(avg_latencies):.3f}s', 
+                transform=ax2.transAxes, verticalalignment='top', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.8), fontsize=10)
         
-        # 3. Load Imbalance
-        ax3 = axes[0, 2]
-        ax3.plot(epochs, load_imbalances, color='green', linewidth=1.5)
-        ax3.set_title('Load Imbalance')
+        # 3. Load Imbalance (bottom-left)
+        ax3 = fig.add_subplot(gs[1, 0:3])
+        ax3.plot(epochs, load_imbalances, color='green', linewidth=2)
+        ax3.set_title('Load Imbalance', fontsize=14, fontweight='bold')
         ax3.set_xlabel('Epoch')
         ax3.set_ylabel('Load Imbalance')
         ax3.grid(True, alpha=0.3)
         
-        # Add load imbalance statistics
+        # Add compact load imbalance statistics
         final_load = np.mean(load_imbalances[-50:]) if len(load_imbalances) >= 50 else np.mean(load_imbalances)
-        ax3.text(0.02, 0.98, f'Final Avg (50): {final_load:.3f}\nMax: {max(load_imbalances):.3f}\nMin: {min(load_imbalances):.3f}', 
-                transform=ax3.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
+        ax3.text(0.98, 0.98, f'Final: {final_load:.3f} | Max: {max(load_imbalances):.3f} | Min: {min(load_imbalances):.3f}', 
+                transform=ax3.transAxes, verticalalignment='top', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8), fontsize=10)
         
-        # 4. Performance Trend Analysis
-        ax4 = axes[1, 0]
-        if len(success_rates) > 20:
-            # Calculate improvement rate over epochs
-            window = 20
-            improvement = []
-            for i in range(window, len(success_rates)):
-                recent_avg = np.mean(success_rates[i-window:i])
-                past_avg = np.mean(success_rates[max(0, i-2*window):i-window])
-                improvement.append(recent_avg - past_avg)
-            
-            ax4.plot(epochs[window:], improvement, color='purple', linewidth=2)
-            ax4.axhline(y=0, color='black', linestyle='--', alpha=0.5)
-            ax4.set_title('Performance Improvement Trend')
-            ax4.set_xlabel('Epoch')
-            ax4.set_ylabel('Success Rate Improvement')
-            ax4.grid(True, alpha=0.3)
-            
-            # Add improvement statistics
-            recent_trend = np.mean(improvement[-20:]) if len(improvement) >= 20 else np.mean(improvement) if improvement else 0
-            positive_epochs = sum(1 for x in improvement if x > 0)
-            ax4.text(0.02, 0.98, f'Recent Trend: {recent_trend:.4f}\nPositive Epochs: {positive_epochs}/{len(improvement)}', 
-                    transform=ax4.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lavender', alpha=0.8))
-        else:
-            ax4.text(0.5, 0.5, 'Insufficient data\nfor trend analysis\n(need >20 epochs)', 
-                    transform=ax4.transAxes, ha='center', va='center', fontsize=12)
-            ax4.set_title('Performance Improvement Trend')
+        # 4. Resource Utilization Comparison (bottom-right)
+        ax4 = fig.add_subplot(gs[1, 3:6])
+        ax4.plot(epochs, uav_utilizations, label='UAV Utilization', color='purple', linewidth=2)
+        ax4.plot(epochs, satellite_utilizations, label='Satellite Utilization', color='orange', linewidth=2)
+        ax4.set_title('Resource Utilization Comparison', fontsize=14, fontweight='bold')
+        ax4.set_xlabel('Epoch')
+        ax4.set_ylabel('Utilization Rate')
+        ax4.grid(True, alpha=0.3)
+        ax4.legend()
+        ax4.set_ylim(0, 1)
         
-        # 5. Resource Utilization Comparison
-        ax5 = axes[1, 1]
-        ax5.plot(epochs, uav_utilizations, label='UAV Utilization', color='magenta', alpha=0.7)
-        ax5.plot(epochs, satellite_utilizations, label='Satellite Utilization', color='cyan', alpha=0.7)
-        ax5.set_title('Resource Utilization Comparison')
-        ax5.set_xlabel('Epoch')
-        ax5.set_ylabel('Utilization')
-        ax5.grid(True, alpha=0.3)
-        ax5.set_ylim(0, 1)
-        ax5.legend()
-        
-        # Calculate utilization efficiency
+        # Add compact utilization statistics
         final_uav_util = np.mean(uav_utilizations[-50:]) if len(uav_utilizations) >= 50 else np.mean(uav_utilizations)
         final_sat_util = np.mean(satellite_utilizations[-50:]) if len(satellite_utilizations) >= 50 else np.mean(satellite_utilizations)
-        ax5.text(0.02, 0.98, f'UAV Util: {final_uav_util:.3f}\nSat Util: {final_sat_util:.3f}\nBalance: {abs(final_uav_util-final_sat_util):.3f}', 
-                transform=ax5.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        ax4.text(0.98, 0.98, f'UAV: {final_uav_util:.1%} | Satellite: {final_sat_util:.1%}', 
+                transform=ax4.transAxes, verticalalignment='top', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='plum', alpha=0.8), fontsize=10)
         
-        # 6. Comprehensive Summary Statistics
-        ax6 = axes[1, 2]
-        ax6.axis('off')  # Turn off axis for text display
+        # 5. Detailed Network Configuration Panel (left side)
+        ax5 = fig.add_subplot(gs[2, 0:2])
+        try:
+            # Get comprehensive network configuration details
+            network_state = network.get_network_state()
+            performance = network.get_performance_summary()
+            config = self.current_config
+            
+            # Create compact configuration table
+            config_text = f"""📋 NETWORK CONFIG
+{'='*25}
+🌐 TOPOLOGY
+Grid: {config.grid.grid_rows}×{config.grid.grid_cols} ({config.grid.total_regions} regions)
+Area: {config.grid.area_bounds[1]/1000:.1f}×{config.grid.area_bounds[3]/1000:.1f}km
+
+🚗 VEHICLES ({len(network.vehicle_manager.vehicles)} total)
+Random: {config.vehicles.random_vehicles}
+Buses: {config.vehicles.bus_vehicles}
+Density: {len(network.vehicle_manager.vehicles)/config.grid.total_regions:.1f}/region
+
+🚁 UAVs ({len(network.uav_manager.static_uavs) + len(network.uav_manager.dynamic_uavs)} total)
+Static: {len(network.uav_manager.static_uavs)}
+Dynamic: {len(network.uav_manager.dynamic_uavs)}
+
+🛰️ SATELLITES
+Count: {len(network.satellite_constellation.satellites)}
+Delay: {getattr(config.satellites, 'processing_delay', 'N/A')}s
+
+⚙️ SIMULATION
+Mode: {self.orchestration_mode.upper()}
+Epochs: {config.simulation.total_epochs}
+Log: {config.simulation.logging_level.upper()}
+Bursts: {len(config.tasks.burst_events) if config.tasks.burst_events else 0}
+"""
+            
+            # Display the configuration with better positioning
+            ax5.text(0.02, 0.98, config_text, 
+                    transform=ax5.transAxes, verticalalignment='top', horizontalalignment='left',
+                    fontsize=8, fontfamily='monospace', wrap=True,
+                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.9))
+            
+            ax5.set_title('📊 Network Configuration Details', fontsize=12, fontweight='bold')
+            ax5.axis('off')
+                
+        except Exception as e:
+            # Fallback display
+            ax5.text(0.5, 0.5, f'Network Configuration\nDetails\n\nError: {str(e)[:50]}...', 
+                    transform=ax5.transAxes, ha='center', va='center', fontsize=11,
+                    bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.8))
+            ax5.set_title('📊 Network Configuration - Error', fontsize=12, fontweight='bold')
+            ax5.axis('off')
         
-        # Calculate comprehensive statistics
+        # 6. UAV Repositioning Timeline (center-wide)
+        ax6 = fig.add_subplot(gs[2, 2:6])
+        try:
+            # Show UAV repositioning decisions as a timeline visualization
+            dynamic_uavs = network.uav_manager.dynamic_uavs
+            
+            if dynamic_uavs and len(epochs) > 0:
+                uav_ids = list(dynamic_uavs.keys())
+                
+                # Collect all repositioning events in chronological order
+                repositioning_events = []
+                
+                # Check if UAV manager has repositioning history
+                if hasattr(network.uav_manager, 'repositioning_history'):
+                    for uav_id in uav_ids:
+                        uav_history = network.uav_manager.repositioning_history.get(uav_id, {})
+                        for epoch, data in uav_history.items():
+                            region_id = data['region_id']
+                            status = data.get('status', 'hovering')
+                            if status == 'moving':
+                                from_region = data.get('old_region_id', '?')
+                                repositioning_events.append((epoch, uav_id, from_region, region_id))
+                
+                # Sort events by epoch
+                repositioning_events.sort(key=lambda x: x[0])
+                
+                if repositioning_events:
+                    # Create visual timeline 
+                    epochs_with_events = [event[0] for event in repositioning_events]
+                    uav_positions = [event[1] for event in repositioning_events]
+                    
+                    # Plot timeline as scatter plot
+                    colors = plt.cm.Set3(np.linspace(0, 1, len(set(uav_positions))))
+                    uav_color_map = {uav_id: colors[i] for i, uav_id in enumerate(set(uav_positions))}
+                    
+                    for i, (epoch, uav_id, from_region, to_region) in enumerate(repositioning_events):
+                        color = uav_color_map[uav_id]
+                        ax6.scatter(epoch, uav_id, s=100, c=[color], alpha=0.8, 
+                                   label=f'UAV{uav_id}' if i == 0 or uav_id != repositioning_events[i-1][1] else "")
+                        
+                        # Add arrow annotation for movement
+                        ax6.annotate(f'R{from_region}→R{to_region}', 
+                                   xy=(epoch, uav_id), xytext=(epoch, uav_id + 0.3),
+                                   ha='center', va='bottom', fontsize=8,
+                                   bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
+                    
+                    ax6.set_title('🚁 UAV Repositioning Timeline - Chronological View', fontsize=12, fontweight='bold')
+                    ax6.set_xlabel('Epoch')
+                    ax6.set_ylabel('UAV ID')
+                    ax6.grid(True, alpha=0.3)
+                    ax6.set_xlim(min(epochs_with_events) - 1, max(epochs_with_events) + 1)
+                    
+                    # Add summary text
+                    summary_text = f"Total Events: {len(repositioning_events)} | "
+                    summary_text += f"UAVs Active: {len(set(uav_positions))} | "
+                    summary_text += f"Avg per UAV: {len(repositioning_events)/len(uav_ids):.1f}"
+                    
+                    ax6.text(0.02, 0.98, summary_text, transform=ax6.transAxes, 
+                           verticalalignment='top', fontsize=10,
+                           bbox=dict(boxstyle='round', facecolor='lightcyan', alpha=0.8))
+                    
+                else:
+                    # No repositioning events
+                    ax6.text(0.5, 0.5, '🚁 No UAV repositioning events occurred during simulation\n\n' +
+                           'This could indicate:\n• Balanced load distribution\n• Short simulation duration\n• Low task generation rate', 
+                           transform=ax6.transAxes, ha='center', va='center', fontsize=11,
+                           bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8))
+                    ax6.set_title('🚁 UAV Repositioning Timeline', fontsize=12, fontweight='bold')
+                    ax6.axis('off')
+            else:
+                # No dynamic UAVs configured
+                ax6.text(0.5, 0.5, '🚁 No dynamic UAVs configured in this simulation\n\n' +
+                       'Dynamic UAVs are required for repositioning events', 
+                       transform=ax6.transAxes, ha='center', va='center', fontsize=11,
+                       bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8))
+                ax6.set_title('🚁 UAV Repositioning Timeline', fontsize=12, fontweight='bold')
+                ax6.axis('off')
+                            
+        except Exception as e:
+            # Error fallback
+            ax6.text(0.5, 0.5, f'🚁 UAV Repositioning Timeline\n\nError: {str(e)[:100]}...', 
+                    transform=ax6.transAxes, ha='center', va='center', fontsize=11,
+                    bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.8))
+            ax6.set_title('🚁 UAV Repositioning Timeline - Error', fontsize=12, fontweight='bold')
+            ax6.axis('off')
+        
+
+        # Calculate comprehensive statistics for display
         total_epochs = len(self.metrics_history)
         simulation_time = getattr(self, '_simulation_time', 0)
         
         # Performance metrics
         initial_performance = np.mean(success_rates[:10]) if len(success_rates) >= 10 else success_rates[0] if success_rates else 0
-        final_performance = np.mean(success_rates[-100:]) if len(success_rates) >= 100 else np.mean(success_rates)
+        final_performance = np.mean(success_rates[-10:]) if len(success_rates) >= 10 else np.mean(success_rates)
         improvement = final_performance - initial_performance
-        
-        # Stability analysis
-        if len(success_rates) >= 50:
-            stability = 1.0 / (1.0 + np.std(success_rates[-50:]))  # Higher is more stable
-        else:
-            stability = 0.5
-        
-        # Performance consistency
-        if len(success_rates) >= 20:
-            recent_variance = np.var(success_rates[-20:])
-            consistency = "High" if recent_variance < 0.01 else "Medium" if recent_variance < 0.05 else "Low"
-        else:
-            consistency = "Unknown"
         
         # Get final network metrics
         final_metrics = network.get_performance_summary()['final_metrics']
         
-        # Task type distribution
+        # Add compact summary info as figure text
+        summary_info = f"✨ {self.current_config.name} | {self.orchestration_mode.upper()} Mode | "
+        summary_info += f"{total_epochs} Epochs ({simulation_time:.1f}s) | "
+        summary_info += f"Success: {final_performance:.1%} ({improvement:+.3f}) | "
+        summary_info += f"Completion: {(final_metrics.total_tasks_completed/final_metrics.total_tasks_generated*100):.1f}% | "
+        summary_info += f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        fig.text(0.5, 0.005, summary_info, ha='center', va='bottom', fontsize=10, 
+                bbox=dict(boxstyle='round', facecolor='lightsteelblue', alpha=0.9))
+        
+        # Adjust layout for the enhanced grid
+        plt.tight_layout(rect=[0, 0.03, 1, 0.94])
+        
+        # Calculate comprehensive and detailed statistics for console output
+        total_epochs = len(self.metrics_history)
+        simulation_time = getattr(self, '_simulation_time', 0)
+        
+        # Enhanced performance metrics
+        initial_performance = np.mean(success_rates[:10]) if len(success_rates) >= 10 else success_rates[0] if success_rates else 0
+        final_performance = np.mean(success_rates[-100:]) if len(success_rates) >= 100 else np.mean(success_rates)
+        improvement = final_performance - initial_performance
+        peak_performance = max(success_rates) if success_rates else 0
+        
+        # Detailed stability analysis
+        if len(success_rates) >= 50:
+            stability = 1.0 / (1.0 + np.std(success_rates[-50:]))
+            performance_trend = "Improving" if improvement > 0.02 else "Declining" if improvement < -0.02 else "Stable"
+        else:
+            stability = 0.5
+            performance_trend = "Unknown"
+        
+        # Enhanced performance consistency
+        if len(success_rates) >= 20:
+            recent_variance = np.var(success_rates[-20:])
+            consistency = "High" if recent_variance < 0.01 else "Medium" if recent_variance < 0.05 else "Low"
+            volatility = np.std(success_rates) / np.mean(success_rates) if np.mean(success_rates) > 0 else 0
+        else:
+            consistency = "Unknown"
+            volatility = 0
+        
+        # Get final network metrics with additional calculations
+        final_metrics = network.get_performance_summary()['final_metrics']
+        
+        # Enhanced task statistics
         task_stats = network.task_manager.task_generator.get_generation_statistics()
         task_diversity = len(task_stats['by_type']) if task_stats.get('by_type') else 0
+        completion_rate = (final_metrics.total_tasks_completed / final_metrics.total_tasks_generated * 100) if final_metrics.total_tasks_generated > 0 else 0
         
-        summary_text = f"""SIMULATION SUMMARY
-════════════════════════
-Configuration: {self.current_config.name}
-Orchestration: {self.orchestration_mode.upper()}
-Total Epochs: {total_epochs}
-Simulation Time: {simulation_time:.1f}s
-Epochs/sec: {total_epochs/max(simulation_time, 1):.2f}
-
-PERFORMANCE METRICS
-═══════════════════════
-Initial Success Rate: {initial_performance:.3f}
-Final Success Rate: {final_performance:.3f}
-Performance Change: {improvement:+.3f}
-Stability Score: {stability:.3f}
-Consistency: {consistency}
-
-NETWORK PERFORMANCE
-══════════════════════
-Tasks Generated: {final_metrics.total_tasks_generated}
-Tasks Completed: {final_metrics.total_tasks_completed}
-Final Success Rate: {final_metrics.success_rate:.1%}
-Avg Latency: {final_metrics.average_latency:.3f}s
-Load Imbalance: {final_metrics.load_imbalance:.3f}
-
-RESOURCE EFFICIENCY
-══════════════════════
-UAV Utilization: {final_metrics.uav_utilization:.1%}
-Satellite Utilization: {final_metrics.satellite_utilization:.1%}
-Coverage: {final_metrics.coverage_percentage:.1f}%
-Task Diversity: {task_diversity} types
-
-OPTIMIZATION METRICS
-═══════════════════════
-Best Success Rate: {max(success_rates):.3f}
-Worst Success Rate: {min(success_rates):.3f}
-Best Latency: {min(avg_latencies):.3f}s
-Success Rate Range: {max(success_rates)-min(success_rates):.3f}
-"""
+        # Resource efficiency calculations
+        avg_uav_util = np.mean(uav_utilizations) if uav_utilizations else 0
+        avg_sat_util = np.mean(satellite_utilizations) if satellite_utilizations else 0
+        resource_balance = abs(avg_uav_util - avg_sat_util)
         
-        ax6.text(0.05, 0.95, summary_text, transform=ax6.transAxes, fontsize=9, 
-                verticalalignment='top', fontfamily='monospace',
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+        # Latency analysis
+        latency_improvement = min(avg_latencies) - max(avg_latencies) if len(avg_latencies) > 1 else 0
+        avg_latency_overall = np.mean(avg_latencies) if avg_latencies else 0
         
-        plt.tight_layout()
+        # Load balancing effectiveness
+        avg_load_imbalance = np.mean(load_imbalances) if load_imbalances else 0
+        load_stability = 1.0 / (1.0 + np.std(load_imbalances)) if load_imbalances else 0
         
         # Save comprehensive plot
         results_dir = "results"

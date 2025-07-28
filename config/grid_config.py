@@ -313,6 +313,35 @@ SAGIN_CONFIGS = {
         )
     ),
     
+    "baseline_fixed": SAGINConfig(
+        name="baseline_fixed",
+        description="Baseline model with fixed dynamic UAV positions (no repositioning)",
+        grid=GridConfig(
+            grid_rows=4,
+            grid_cols=4,
+            area_bounds=(0.0, 8000.0, 0.0, 8000.0)
+        ),
+        vehicles=VehicleConfig(
+            random_vehicles=30,
+            bus_vehicles=10
+        ),
+        uavs=UAVConfig(
+            dynamic_uavs=5
+        ),
+        satellites=SatelliteConfig(
+            num_satellites=8
+        ),
+        tasks=TaskConfig(
+            base_task_rate=1.0,
+            task_type_proportions={'normal': 0.4, 'computation_intensive': 0.4, 'data_intensive': 0.15, 'latency_sensitive': 0.05},
+            burst_events=[(2, 30.0, 20.0, 2.0), (3, 60.0, 15.0, 1.8)]
+        ),
+        simulation=SimulationConfig(
+            total_epochs=100,
+            logging_level="medium"
+        )
+    ),
+    
     "highway_scenario": SAGINConfig(
         name="highway_scenario",
         description="Highway scenario with linear topology",

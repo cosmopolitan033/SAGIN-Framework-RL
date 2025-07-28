@@ -256,13 +256,14 @@ class SAGINDemo:
         print("\n🧠 Select Orchestration Mode:")
         print("=" * 40)
         print("1. 🔧 Heuristic (Original Algorithm)")
-        print("2. 🤖 Reinforcement Learning")
-        print("3. 🚀 Train New RL Model")
+        print("2. 📍 Baseline (Fixed UAV Positions)")
+        print("3. 🤖 Reinforcement Learning")
+        print("4. 🚀 Train New RL Model")
         print("0. ❌ Cancel")
         
         while True:
             try:
-                choice = input("\nEnter choice (0-3): ").strip()
+                choice = input("\nEnter choice (0-4): ").strip()
                 
                 if choice == '1':
                     self.orchestration_mode = "heuristic"
@@ -270,6 +271,11 @@ class SAGINDemo:
                     return True
                     
                 elif choice == '2':
+                    self.orchestration_mode = "baseline"
+                    print("✅ Selected: Baseline orchestration (fixed UAV positions)")
+                    return True
+                    
+                elif choice == '3':
                     if self.rl_manager:
                         selected_model = self.rl_manager.interactive_model_selection()
                         if selected_model is None:
@@ -286,7 +292,7 @@ class SAGINDemo:
                         print("❌ RL manager not available")
                         continue
                         
-                elif choice == '3':
+                elif choice == '4':
                     success = self._train_new_rl_model()
                     if success:
                         return self.select_orchestration_mode()  # Re-select after training
@@ -298,7 +304,7 @@ class SAGINDemo:
                     return False
                     
                 else:
-                    print("❌ Invalid choice. Please enter 0-3")
+                    print("❌ Invalid choice. Please enter 0-4")
                     
             except (ValueError, KeyboardInterrupt):
                 print("❌ Invalid input or interrupted")
@@ -502,6 +508,9 @@ class SAGINDemo:
                 print(f"❌ Failed to load RL model '{self.selected_rl_model}': {e}")
                 print("🔧 Falling back to heuristic orchestration")
                 network.set_heuristic_orchestration()
+        elif self.orchestration_mode == "baseline":
+            network.set_baseline_orchestration()
+            print("📍 Using baseline orchestration (fixed UAV positions)")
         else:
             network.set_heuristic_orchestration()
             print("🔧 Using heuristic orchestration")

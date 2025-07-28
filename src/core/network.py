@@ -351,11 +351,11 @@ class SAGINNetwork:
                     print(f"    Dynamic UAV {uav_id}: {uav.status.value} in region {current_region}, "
                           f"workload={workload:.0f}, energy={energy_pct:.1f}%")
 
-        # 2.1. Dynamic UAV repositioning (every 10 epochs)
-        if self.epoch_count % 10 == 0:
+        # 2.1. Dynamic UAV repositioning (every 5 epochs, same as RL mode)
+        if self.epoch_count % 5 == 0:
             if verbose:
-                print(f"  🔄 Checking dynamic UAV repositioning...")
-            self._reposition_dynamic_uavs(verbose)
+                print(f"  🔄 UAV Repositioning Decision Epoch {self.epoch_count}: Checking dynamic UAVs...")
+            self._reposition_dynamic_uavs(verbose, decision_epoch=self.epoch_count)
         
         # 3. Update satellite positions and processing
         if verbose:
@@ -1540,7 +1540,7 @@ class SAGINNetwork:
         """Setup network topology using a grid configuration object."""
         self.setup_network_topology(grid_config=grid_config, task_config=task_config, satellite_config=satellite_config)
     
-    def _reposition_dynamic_uavs(self, verbose: bool = False):
+    def _reposition_dynamic_uavs(self, verbose: bool = False, decision_epoch: int = None):
         """Reposition dynamic UAVs to balance load across regions."""
         if not self.uav_manager.dynamic_uavs:
             if verbose:
@@ -1566,8 +1566,8 @@ class SAGINNetwork:
         underloaded_regions = [r for r, load in region_loads.items() if load < 0.05]
         
         if verbose:
-            print(f"    🔴 Overloaded regions (>0.3): {overloaded_regions}")
-            print(f"    🟢 Underloaded regions (<0.1): {underloaded_regions}")
+            print(f"    🔴 Overloaded regions (>0.2): {overloaded_regions}")
+            print(f"    🟢 Underloaded regions (<0.05): {underloaded_regions}")
         
         if not overloaded_regions:
             if verbose:
@@ -1591,27 +1591,45 @@ class SAGINNetwork:
         # Assign available dynamic UAVs to overloaded regions
         import random
         repositioned = 0
+        moves_made = []
+        
         for uav in available_dynamic_uavs[:len(overloaded_regions)]:  # Limit to available slots
             target_region = random.choice(overloaded_regions)
             region_center = self.regions[target_region].center
             
             # Only move if not already in the target region
             if uav.assigned_region_id != target_region:
+                old_region = uav.assigned_region_id
                 flight_time = uav.assign_to_region(target_region, region_center, self.current_time)
                 repositioned += 1
+                moves_made.append(f"UAV{uav.id}: R{old_region}→R{target_region}")
+                
+                # Record repositioning for tracking
+                epoch = decision_epoch if decision_epoch is not None else int(self.current_time / self.time_step) if hasattr(self, 'time_step') else int(self.current_time)
+                self.uav_manager.record_repositioning(uav.id, epoch, old_region, target_region, 'moving')
                 
                 if verbose:
-                    print(f"      ✈️  UAV {uav.id}: moving from region {uav.assigned_region_id} to region {target_region} "
+                    print(f"      ✈️  DECISION EPOCH {epoch}: UAV {uav.id} repositioned from region {old_region} to region {target_region} "
                           f"(flight time: {flight_time:.1f}s)")
                 
                 # Remove this region from overloaded list to avoid multiple UAVs going to same region
                 if target_region in overloaded_regions:
                     overloaded_regions.remove(target_region)
             else:
+                # Record hovering status
+                epoch = decision_epoch if decision_epoch is not None else int(self.current_time / self.time_step) if hasattr(self, 'time_step') else int(self.current_time)
+                self.uav_manager.record_repositioning(uav.id, epoch, target_region, target_region, 'hovering')
+                
                 if verbose:
-                    print(f"      ✅ UAV {uav.id}: already in target region {target_region}")
+                    print(f"      ✅ EPOCH {epoch}: UAV {uav.id} remains in region {target_region} (no move needed)")
         
-        if verbose and repositioned == 0:
+        # Summary log of all repositioning decisions made this epoch
+        if verbose and decision_epoch is not None:
+            if moves_made:
+                print(f"    📋 REPOSITIONING SUMMARY EPOCH {decision_epoch}: {len(moves_made)} UAVs moved: {', '.join(moves_made)}")
+            else:
+                print(f"    📋 REPOSITIONING SUMMARY EPOCH {decision_epoch}: No UAVs repositioned (balanced load)")
+        elif verbose and repositioned == 0:
             print(f"    ℹ️  No UAVs needed repositioning")
     
     def set_task_type_proportions(self, proportions: Dict[str, float]):

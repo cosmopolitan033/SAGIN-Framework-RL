@@ -330,6 +330,20 @@ class UAVManager:
         self.static_uavs: Dict[int, StaticUAV] = {}
         self.dynamic_uavs: Dict[int, DynamicUAV] = {}
         self.next_uav_id = 1
+        # Track UAV repositioning history for visualization
+        self.repositioning_history: Dict[int, Dict[int, Dict[str, any]]] = {}  # {uav_id: {epoch: {data}}}
+    
+    def record_repositioning(self, uav_id: int, epoch: int, old_region: int, new_region: int, status: str):
+        """Record UAV repositioning for tracking."""
+        if uav_id not in self.repositioning_history:
+            self.repositioning_history[uav_id] = {}
+        
+        self.repositioning_history[uav_id][epoch] = {
+            'old_region_id': old_region,
+            'region_id': new_region,
+            'status': status,
+            'timestamp': epoch
+        }
     
     def create_static_uav(self, region_id: int, position: Position,
                          cpu_capacity: float = 1e8) -> int:  # Increased to 1e8 (100M cycles/s)

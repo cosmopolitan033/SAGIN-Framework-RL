@@ -60,6 +60,13 @@ class HierarchicalRLTrainer:
         self.central_losses = []
         self.static_uav_losses = []  # For shared static UAV agent
         
+        # Track task distribution for improved plotting
+        self.task_distribution_history = {
+            'local': [],
+            'dynamic': [],
+            'satellite': []
+        }
+        
         # Results directory
         self.results_dir = config.get('results_dir', 'results')
         os.makedirs(self.results_dir, exist_ok=True)
@@ -328,6 +335,27 @@ class HierarchicalRLTrainer:
             # Record episode reward
             self.rewards_history.append(episode_reward)
             
+            # Track task distribution for this episode
+            episode_task_counts = {'local': 0, 'dynamic': 0, 'satellite': 0}
+            
+            # Count task allocations from network metrics if available
+            if hasattr(self.env.network, 'metrics') and hasattr(self.env.network.metrics, 'task_allocations'):
+                for allocation in self.env.network.metrics.task_allocations:
+                    if allocation in episode_task_counts:
+                        episode_task_counts[allocation] += 1
+            
+            # Calculate proportions and add to history
+            total_tasks = sum(episode_task_counts.values())
+            if total_tasks > 0:
+                for task_type in ['local', 'dynamic', 'satellite']:
+                    self.task_distribution_history[task_type].append(
+                        episode_task_counts[task_type] / total_tasks * 100
+                    )
+            else:
+                # No tasks this episode, maintain proportions
+                for task_type in ['local', 'dynamic', 'satellite']:
+                    self.task_distribution_history[task_type].append(0.0)
+            
             # Print progress with debugging info
             if verbose and (episode % 10 == 0 or episode == 1):
                 elapsed = time.time() - start_time
@@ -473,32 +501,55 @@ class HierarchicalRLTrainer:
         ax3.text(0.02, 0.98, f'Final Avg (50): {final_uav_loss:.4f}\nMax: {max(self.static_uav_losses):.4f}\nMin: {min(self.static_uav_losses):.4f}', 
                 transform=ax3.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='moccasin', alpha=0.8))
         
-        # 4. Learning Progress (Reward Improvement)
+        # 4. Task Offloading Distribution Analysis
         ax4 = axes[1, 0]
-        if len(self.rewards_history) > 20:
-            # Calculate improvement rate over episodes
-            window = 20
-            improvement = []
-            for i in range(window, len(self.rewards_history)):
-                recent_avg = np.mean(self.rewards_history[i-window:i])
-                past_avg = np.mean(self.rewards_history[max(0, i-2*window):i-window])
-                improvement.append(recent_avg - past_avg)
-            
-            ax4.plot(range(window+1, len(self.rewards_history) + 1), improvement, color='purple', linewidth=2)
-            ax4.axhline(y=0, color='black', linestyle='--', alpha=0.5)
-            ax4.set_title('Learning Progress (Reward Improvement)')
-            ax4.set_xlabel('Episode')
-            ax4.set_ylabel('Reward Improvement')
-            ax4.grid(True, alpha=0.3)
-            
-            # Add improvement statistics
-            recent_improvement = np.mean(improvement[-20:]) if len(improvement) >= 20 else np.mean(improvement)
-            ax4.text(0.02, 0.98, f'Recent Trend: {recent_improvement:.2f}\nPositive Episodes: {sum(1 for x in improvement if x > 0)}/{len(improvement)}', 
-                    transform=ax4.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lavender', alpha=0.8))
-        else:
-            ax4.text(0.5, 0.5, 'Insufficient data\nfor progress analysis\n(need >20 episodes)', 
-                    transform=ax4.transAxes, ha='center', va='center', fontsize=12)
-            ax4.set_title('Learning Progress')
+        
+        # Use collected task distribution data
+        try:
+            if any(len(data) > 0 for data in self.task_distribution_history.values()):
+                episodes_range = range(1, len(self.task_distribution_history['local']) + 1)
+                
+                ax4.plot(episodes_range, self.task_distribution_history['local'], 
+                        label='Local Processing', color='green', linewidth=2)
+                ax4.plot(episodes_range, self.task_distribution_history['dynamic'], 
+                        label='Dynamic UAV', color='blue', linewidth=2)
+                ax4.plot(episodes_range, self.task_distribution_history['satellite'], 
+                        label='Satellite', color='red', linewidth=2)
+                
+                ax4.set_title('Task Offloading Distribution Analysis')
+                ax4.set_xlabel('Episode')
+                ax4.set_ylabel('Task Allocation Percentage (%)')
+                ax4.set_ylim(0, 100)
+                ax4.grid(True, alpha=0.3)
+                ax4.legend()
+                
+                # Add recent statistics
+                if len(self.task_distribution_history['local']) >= 20:
+                    recent_local = np.mean(self.task_distribution_history['local'][-20:])
+                    recent_dynamic = np.mean(self.task_distribution_history['dynamic'][-20:])
+                    recent_satellite = np.mean(self.task_distribution_history['satellite'][-20:])
+                else:
+                    recent_local = np.mean(self.task_distribution_history['local'])
+                    recent_dynamic = np.mean(self.task_distribution_history['dynamic'])
+                    recent_satellite = np.mean(self.task_distribution_history['satellite'])
+                
+                ax4.text(0.02, 0.98, f'Recent Distribution:\nLocal: {recent_local:.1f}%\nDynamic: {recent_dynamic:.1f}%\nSatellite: {recent_satellite:.1f}%', 
+                        transform=ax4.transAxes, verticalalignment='top', 
+                        bbox=dict(boxstyle='round', facecolor='lightcyan', alpha=0.8))
+            else:
+                ax4.text(0.5, 0.5, 'No task distribution\ndata collected yet', 
+                        transform=ax4.transAxes, ha='center', va='center', 
+                        bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8))
+                ax4.set_title('Task Offloading Distribution Analysis')
+                ax4.set_xlabel('Episode')
+                ax4.set_ylabel('Task Allocation Percentage (%)')
+        
+        except Exception as e:
+            print(f"Warning: Could not generate task distribution plot: {e}")
+            ax4.text(0.5, 0.5, f'Error generating\ntask distribution plot:\n{str(e)[:50]}...', 
+                    transform=ax4.transAxes, ha='center', va='center', 
+                    bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.8))
+            ax4.set_title('Task Offloading Distribution Analysis - Error')
         
         # 5. Loss Convergence Analysis
         ax5 = axes[1, 1]

@@ -342,6 +342,86 @@ SAGIN_CONFIGS = {
         )
     ),
     
+    "unbalanced_load": SAGINConfig(
+        name="unbalanced_load",
+        description="Large-scale highly unbalanced task generation to test adaptive UAV allocation",
+        grid=GridConfig(
+            grid_rows=5,
+            grid_cols=10,
+            area_bounds=(0.0, 20000.0, 0.0, 10000.0),  # Same large area as large_simulation
+            region_base_intensity=1.0
+        ),
+        vehicles=VehicleConfig(
+            random_vehicles=80,
+            bus_vehicles=20  # Same vehicle count as large_simulation
+        ),
+        uavs=UAVConfig(
+            dynamic_uavs=15  # More dynamic UAVs for large-scale repositioning demonstration
+        ),
+        satellites=SatelliteConfig(
+            num_satellites=12  # Same as large_simulation
+        ),
+        tasks=TaskConfig(
+            base_task_rate=2.0,  # Higher base rate to amplify the burst effects
+            cpu_cycles_mean=3e8,  # Higher complexity tasks like large_simulation
+            cpu_cycles_std=3e7,
+            deadline_mean=2.0,    # Even tighter deadlines to increase pressure
+            deadline_std=0.3,
+            task_type_proportions={'normal': 0.1, 'computation_intensive': 0.8, 'data_intensive': 0.05, 'latency_sensitive': 0.05},
+            # EXTREME burst events across the large 5x10 grid (50 regions) - MAXIMUM IMBALANCE
+            burst_events=[
+                # MEGA CORNER DISASTERS (regions 1, 10, 41, 50) - EXTREME OVERLOAD
+                (1, 30.0, 60.0, 12.0),   # Top-left corner: 12x intensity for 60 epochs!
+                (10, 35.0, 55.0, 11.0),  # Top-right corner: 11x intensity 
+                (41, 120.0, 70.0, 15.0), # Bottom-left corner: 15x intensity - MAXIMUM LOAD
+                (50, 125.0, 65.0, 13.0), # Bottom-right corner: 13x intensity
+                
+                # CENTRAL METROPOLITAN MELTDOWN (regions 23, 24, 25, 26, 27, 28)
+                (23, 60.0, 80.0, 8.0),   # Central region cluster - SUSTAINED HIGH LOAD
+                (24, 65.0, 75.0, 9.0),
+                (25, 70.0, 70.0, 10.0),  # Peak central load
+                (26, 75.0, 75.0, 8.5),
+                (27, 80.0, 80.0, 9.5),
+                (28, 85.0, 70.0, 8.8),
+                
+                # EDGE CRISIS ZONES (regions 5, 15, 35, 45) - HIGH SUSTAINED PRESSURE
+                (5, 100.0, 50.0, 7.0),   # Top edge catastrophe
+                (15, 105.0, 55.0, 7.5),  # Right edge disaster
+                (35, 110.0, 50.0, 7.2),  # Left edge crisis
+                (45, 115.0, 55.0, 7.8),  # Bottom edge overload
+                
+                # DIAGONAL DESTRUCTION PATTERN (regions 11, 22, 33, 44)
+                (11, 160.0, 40.0, 9.0),  # Diagonal mega-burst
+                (22, 165.0, 40.0, 9.5),
+                (33, 170.0, 40.0, 9.2),
+                (44, 175.0, 40.0, 9.8),
+                
+                # APOCALYPTIC LATE-STAGE TRIPLE OVERLOAD
+                (7, 220.0, 60.0, 18.0),   # ULTIMATE EXTREME BURST - 18x intensity!
+                (18, 225.0, 55.0, 16.0),  # Overlapping disaster
+                (32, 230.0, 50.0, 17.0),  # Triple overlap catastrophe
+                
+                # ADDITIONAL CHAOS INJECTORS - Random high-intensity bursts
+                (3, 90.0, 30.0, 6.0),     # Random chaos burst
+                (13, 140.0, 35.0, 6.5),   # Mid-simulation spike
+                (37, 180.0, 25.0, 8.0),   # Late chaos injection
+                (19, 200.0, 45.0, 7.0),   # Extended chaos period
+                
+                # FINAL APOCALYPSE - Multiple simultaneous mega-bursts
+                (2, 270.0, 40.0, 14.0),   # Final disaster wave
+                (8, 275.0, 35.0, 13.5),   # Overlapping final burst
+                (12, 280.0, 30.0, 15.5),  # Ultimate system stress test
+                (38, 285.0, 25.0, 12.5),  # Final chaos spike
+            ]
+        ),
+        simulation=SimulationConfig(
+            total_epochs=350,  # Longer simulation to show sustained adaptation
+            logging_level="medium",  # Medium logging for large-scale (high would be too verbose)
+            detailed_interval=5,     # Less frequent detailed logs for performance
+            progress_interval=20
+        )
+    ),
+    
     "highway_scenario": SAGINConfig(
         name="highway_scenario",
         description="Highway scenario with linear topology",

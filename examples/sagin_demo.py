@@ -657,14 +657,9 @@ class SAGINDemo:
         # Create enhanced grid layout: 2x2 metrics + config panel + UAV timeline
         gs = fig.add_gridspec(3, 6, height_ratios=[1, 1, 0.8], hspace=0.35, wspace=0.3)
         
-        # 1. Success Rate with moving average (top-left)
+        # 1. Success Rate without moving average (top-left)
         ax1 = fig.add_subplot(gs[0, 0:3])
-        ax1.plot(epochs, success_rates, alpha=0.7, color='blue', linewidth=1.5, label='Success Rate')
-        
-        # Add moving average (window=10)
-        if len(success_rates) > 10:
-            moving_avg = np.convolve(success_rates, np.ones(10)/10, mode='valid')
-            ax1.plot(epochs[9:], moving_avg, color='red', linewidth=2, label='Moving Average (10)')
+        ax1.plot(epochs, success_rates, alpha=0.8, color='blue', linewidth=2, label='Success Rate')
         
         ax1.set_title('Task Success Rate', fontsize=14, fontweight='bold')
         ax1.set_xlabel('Epoch')
@@ -971,6 +966,261 @@ Bursts: {len(config.tasks.burst_events) if config.tasks.burst_events else 0}
         except Exception as e:
             print(f"Could not export results: {e}")
 
+    def _get_best_rl_model(self):
+        """Automatically select the best available RL model based on performance metrics."""
+        if not RL_AVAILABLE or not self.rl_manager:
+            return None
+        
+        models = self.rl_manager.list_models()
+        if not models:
+            return None
+        
+        # Sort models by success rate if available, otherwise use most recent
+        models_with_performance = [m for m in models if 'success_rate' in m.get('performance', {})]
+        
+        if models_with_performance:
+            # Select model with highest success rate
+            best_model = max(models_with_performance, 
+                           key=lambda m: m['performance']['success_rate'])
+            print(f"🎯 Selected best RL model: {best_model['name']} (Success Rate: {best_model['performance']['success_rate']:.1%})")
+            return best_model['name']
+        else:
+            # Fallback to most recent model
+            latest_model = models[-1]
+            print(f"📅 Selected latest RL model: {latest_model['name']} (no performance data available)")
+            return latest_model['name']
+
+    def compare_orchestration_methods(self, config_name: str):
+        """Compare all three orchestration methods (baseline, heuristic, RL) on the same configuration."""
+        print(f"\n🔬 ORCHESTRATION METHOD COMPARISON")
+        print(f"Configuration: {config_name}")
+        print("="*60)
+        
+        # Interactive RL model selection if RL is available
+        best_rl_model = None
+        if RL_AVAILABLE and self.rl_manager:
+            models = self.rl_manager.list_models()
+            if models:
+                print("\n🤖 Select RL model for comparison:")
+                selected_model = self.rl_manager.interactive_model_selection()
+                if selected_model and selected_model != "heuristic":
+                    best_rl_model = selected_model
+                    print(f"✅ Selected RL model: {best_rl_model}")
+                else:
+                    print("⚠️ No RL model selected, skipping RL comparison")
+            else:
+                print("⚠️ No RL models available, skipping RL comparison")
+        
+        # Interactive epochs selection
+        config = get_sagin_config(config_name)
+        default_epochs = config.simulation.total_epochs
+        print(f"\n⏱️ Simulation Duration Configuration")
+        print(f"Default epochs for {config_name}: {default_epochs}")
+        
+        while True:
+            try:
+                epochs_input = input(f"Enter number of epochs to run (default: {default_epochs}): ").strip()
+                if not epochs_input:
+                    comparison_epochs = default_epochs
+                    break
+                else:
+                    comparison_epochs = int(epochs_input)
+                    if comparison_epochs <= 0:
+                        print("❌ Number of epochs must be positive")
+                        continue
+                    break
+            except ValueError:
+                print("❌ Invalid input. Please enter a valid number.")
+                continue
+        
+        print(f"✅ Running comparison with {comparison_epochs} epochs")
+        
+        # Store results for each method
+        comparison_results = {
+            'baseline': {'metrics_history': [], 'final_metrics': None},
+            'heuristic': {'metrics_history': [], 'final_metrics': None},
+            'rl': {'metrics_history': [], 'final_metrics': None}
+        }
+        
+        # Determine which methods to run
+        methods_to_run = ['baseline', 'heuristic']
+        if best_rl_model:
+            methods_to_run.append('rl')
+        else:
+            print("⚠️ Running baseline and heuristic comparison only")
+        
+        for method in methods_to_run:
+            print(f"\n🚀 Running {method.upper()} orchestration...")
+            
+            # Set orchestration mode and RL model if needed
+            self.orchestration_mode = method
+            if method == 'rl':
+                self.selected_rl_model = best_rl_model
+            
+            # Clear previous metrics
+            self.metrics_history = []
+            
+            try:
+                # Run simulation for this method with specified epochs
+                network = self.run_simulation(config_name, epochs=comparison_epochs)
+                
+                # Store results
+                comparison_results[method]['metrics_history'] = self.metrics_history.copy()
+                comparison_results[method]['final_metrics'] = network.get_performance_summary()['final_metrics']
+                
+                # Get final success rate
+                if self.metrics_history:
+                    final_success = self.metrics_history[-1]['success_rate']
+                    print(f"✅ {method.upper()} completed - Final Success Rate: {final_success:.1%}")
+                else:
+                    print(f"⚠️ {method.upper()} completed - No metrics recorded")
+                    
+            except Exception as e:
+                print(f"❌ {method.upper()} failed: {str(e)}")
+                continue
+        
+        # Create comparison plot
+        self.plot_comparison_results(comparison_results, config_name)
+        
+        return comparison_results
+
+    def plot_comparison_results(self, comparison_results: dict, config_name: str):
+        """Plot comparison of all three orchestration methods."""
+        print(f"\n📊 Creating comparison visualization...")
+        
+        # Create figure
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        fig.suptitle(f'SAGIN Orchestration Methods Comparison - {config_name} - {timestamp}', 
+                    fontsize=16, fontweight='bold')
+        
+        # Colors for each method
+        colors = {
+            'baseline': '#FF8C00',    # Orange
+            'heuristic': '#32CD32',   # Green  
+            'rl': '#8A2BE2'           # Purple
+        }
+        
+        # Labels for better display
+        labels = {
+            'baseline': 'Baseline (Fixed)',
+            'heuristic': 'Heuristic (Adaptive)', 
+            'rl': 'RL (Intelligent)'
+        }
+        
+        # 1. Success Rate Comparison
+        for method, data in comparison_results.items():
+            if data['metrics_history']:
+                epochs = [m['epoch'] for m in data['metrics_history']]
+                success_rates = [m['success_rate'] for m in data['metrics_history']]
+                ax1.plot(epochs, success_rates, 
+                        color=colors[method], linewidth=2.5, 
+                        label=labels[method], alpha=0.8)
+        
+        ax1.set_title('Task Success Rate Comparison', fontsize=14, fontweight='bold')
+        ax1.set_xlabel('Epoch')
+        ax1.set_ylabel('Success Rate')
+        ax1.grid(True, alpha=0.3)
+        ax1.set_ylim(0, 1)
+        ax1.legend()
+        
+        # 2. Average Latency Comparison  
+        for method, data in comparison_results.items():
+            if data['metrics_history']:
+                epochs = [m['epoch'] for m in data['metrics_history']]
+                latencies = [m['average_latency'] for m in data['metrics_history']]
+                ax2.plot(epochs, latencies,
+                        color=colors[method], linewidth=2.5,
+                        label=labels[method], alpha=0.8)
+        
+        ax2.set_title('Average Latency Comparison', fontsize=14, fontweight='bold')
+        ax2.set_xlabel('Epoch')
+        ax2.set_ylabel('Latency (s)')
+        ax2.grid(True, alpha=0.3)
+        ax2.legend()
+        
+        # 3. Load Imbalance Comparison
+        for method, data in comparison_results.items():
+            if data['metrics_history']:
+                epochs = [m['epoch'] for m in data['metrics_history']]
+                load_imbalances = [m['load_imbalance'] for m in data['metrics_history']]
+                ax3.plot(epochs, load_imbalances,
+                        color=colors[method], linewidth=2.5,
+                        label=labels[method], alpha=0.8)
+        
+        ax3.set_title('Load Imbalance Comparison', fontsize=14, fontweight='bold') 
+        ax3.set_xlabel('Epoch')
+        ax3.set_ylabel('Load Imbalance')
+        ax3.grid(True, alpha=0.3)
+        ax3.legend()
+        
+        # 4. Performance Summary Bar Chart
+        methods = []
+        final_success_rates = []
+        final_latencies = []
+        
+        for method, data in comparison_results.items():
+            if data['final_metrics']:
+                methods.append(labels[method])
+                final_success_rates.append(data['final_metrics'].success_rate)
+                final_latencies.append(data['final_metrics'].average_latency)
+        
+        if methods:
+            x = np.arange(len(methods))
+            width = 0.35
+            
+            # Success rate bars
+            ax4_twin = ax4.twinx()
+            bars1 = ax4.bar(x - width/2, final_success_rates, width, 
+                           label='Success Rate', alpha=0.8, color='lightblue')
+            bars2 = ax4_twin.bar(x + width/2, final_latencies, width,
+                                label='Avg Latency (s)', alpha=0.8, color='lightcoral')
+            
+            ax4.set_title('Final Performance Summary', fontsize=14, fontweight='bold')
+            ax4.set_xlabel('Orchestration Method')
+            ax4.set_ylabel('Success Rate', color='blue')
+            ax4_twin.set_ylabel('Average Latency (s)', color='red')
+            ax4.set_xticks(x)
+            ax4.set_xticklabels(methods, rotation=15)
+            ax4.set_ylim(0, 1)
+            
+            # Add value labels on bars
+            for bar, value in zip(bars1, final_success_rates):
+                height = bar.get_height()
+                ax4.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                        f'{value:.1%}', ha='center', va='bottom', fontweight='bold')
+            
+            for bar, value in zip(bars2, final_latencies):
+                height = bar.get_height()
+                ax4_twin.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                             f'{value:.2f}s', ha='center', va='bottom', fontweight='bold')
+            
+            # Legends
+            ax4.legend(loc='upper left')
+            ax4_twin.legend(loc='upper right')
+        
+        plt.tight_layout()
+        
+        # Save comparison plot
+        results_dir = "results"
+        os.makedirs(results_dir, exist_ok=True)
+        comparison_filename = f"{results_dir}/orchestration_comparison_{config_name}_{timestamp}.png"
+        plt.savefig(comparison_filename, dpi=300, bbox_inches='tight')
+        print(f"💾 Comparison results saved to: {comparison_filename}")
+        
+        plt.show()
+        
+        # Print comparison summary
+        print(f"\n🎯 ORCHESTRATION COMPARISON SUMMARY")
+        print("="*60)
+        for method, data in comparison_results.items():
+            if data['final_metrics']:
+                metrics = data['final_metrics']
+                print(f"{labels[method]:20}: Success {metrics.success_rate:.1%} | "
+                      f"Latency {metrics.average_latency:.3f}s | "
+                      f"Tasks {metrics.total_tasks_completed}/{metrics.total_tasks_generated}")
+        print("="*60)
+
 
 def main():
     """Main function with configuration-based menu."""
@@ -989,11 +1239,14 @@ def main():
         print("5. 📡 Real-time visualization")
         if RL_AVAILABLE:
             print("6. 🤖 RL Management (train/view models)")
+            print("7. 🔬 Compare orchestration methods")
+        else:
+            print("6. 🔬 Compare orchestration methods")
         print("0. ❌ Exit")
         print("=" * 60)
         
         try:
-            max_choice = "6" if RL_AVAILABLE else "5"
+            max_choice = "7" if RL_AVAILABLE else "6"
             choice = input(f"\nEnter choice (0-{max_choice}): ").strip()
             
             if choice == '1':
@@ -1096,6 +1349,73 @@ def main():
                     
             elif choice == '6' and RL_AVAILABLE:
                 demo.manage_rl_models()
+                
+            elif choice == '7' and RL_AVAILABLE:
+                # Orchestration methods comparison
+                print("\nAvailable configurations:")
+                configs = list_available_configs()
+                for i, config in enumerate(configs, 1):
+                    print(f"  {i}. {config}")
+                
+                try:
+                    selection = input("\nEnter configuration name or number for comparison: ").strip()
+                    if selection.isdigit():
+                        config_idx = int(selection) - 1
+                        if 0 <= config_idx < len(configs):
+                            config_name = configs[config_idx]
+                        else:
+                            print("Invalid selection")
+                            continue
+                    else:
+                        config_name = selection
+                    
+                    print(f"\n🔬 This will run all three orchestration methods on '{config_name}'")
+                    print("   This may take several minutes to complete...")
+                    confirm = input("Continue? (y/n): ").strip().lower()
+                    
+                    if confirm.startswith('y'):
+                        comparison_results = demo.compare_orchestration_methods(config_name)
+                    else:
+                        print("Comparison cancelled.")
+                        
+                except (ValueError, IndexError):
+                    print("Invalid selection")
+                    continue
+                    
+            elif choice == '6' and not RL_AVAILABLE:
+                # Orchestration methods comparison (when RL not available)
+                print("\nAvailable configurations:")
+                configs = list_available_configs()
+                for i, config in enumerate(configs, 1):
+                    print(f"  {i}. {config}")
+                
+                try:
+                    selection = input("\nEnter configuration name or number for comparison: ").strip()
+                    if selection.isdigit():
+                        config_idx = int(selection) - 1
+                        if 0 <= config_idx < len(configs):
+                            config_name = configs[config_idx]
+                        else:
+                            print("Invalid selection")
+                            continue
+                    else:
+                        config_name = selection
+                    
+                    print(f"\n🔬 This will run baseline and heuristic methods on '{config_name}'")
+                    print("   (RL not available - install torch for full comparison)")
+                    print("   This may take several minutes to complete...")
+                    confirm = input("Continue? (y/n): ").strip().lower()
+                    
+                    if confirm.startswith('y'):
+                        # Run limited comparison without RL
+                        print("⚠️  Running limited comparison (baseline + heuristic only)")
+                        comparison_results = demo.compare_orchestration_methods(config_name)
+                    else:
+                        print("Comparison cancelled.")
+                        
+                except (ValueError, IndexError):
+                    print("Invalid selection")
+                    continue
                 
             elif choice == '0':
                 print("Goodbye! 👋")

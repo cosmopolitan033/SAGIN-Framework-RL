@@ -55,8 +55,8 @@ class CentralAgent:
         self.batch_size = config.get('batch_size', 64)
         self.replay_buffer = deque(maxlen=self.buffer_size)
         
-        # Training parameters
-        self.gamma = config.get('gamma', 0.99)  # Discount factor
+        # Training parameters based on new formulation
+        self.gamma = config.get('gamma', 0.95)  # Central agent discount factor γc = 0.95
         self.tau = config.get('tau', 0.005)     # Soft update parameter
         
         # Exploration parameters

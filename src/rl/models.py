@@ -12,9 +12,76 @@ import numpy as np
 from typing import Dict, List, Tuple, Any
 
 
+class ActorNetwork(nn.Module):
+    """
+    Actor network for the central agent (outputs action probabilities).
+    """
+    
+    def __init__(self, state_dim: int, action_dim: int, hidden_dim: int = 256):
+        super(ActorNetwork, self).__init__()
+        
+        self.network = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, action_dim),
+            nn.Softmax(dim=-1)
+        )
+    
+    def forward(self, state):
+        return self.network(state)
+
+
+class CriticNetwork(nn.Module):
+    """
+    Critic network for the central agent (outputs state values).
+    """
+    
+    def __init__(self, state_dim: int, hidden_dim: int = 256):
+        super(CriticNetwork, self).__init__()
+        
+        self.network = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 1)
+        )
+    
+    def forward(self, state):
+        return self.network(state)
+
+
+class QNetwork(nn.Module):
+    """
+    Q-Network for static UAV agents (DQN implementation).
+    """
+    
+    def __init__(self, state_dim: int, action_dim: int, hidden_dim: int = 128):
+        super(QNetwork, self).__init__()
+        
+        self.network = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, action_dim)
+        )
+    
+    def forward(self, state):
+        return self.network(state)
+
+
 class ActorCriticNetwork(nn.Module):
     """
-    Actor-critic network used by the central agent.
+    Legacy Actor-critic network (kept for backward compatibility).
     
     This network has two heads:
     - The actor head outputs a probability distribution over actions

@@ -37,6 +37,9 @@ class HierarchicalRLTrainer:
         """
         self.config = config
         
+        # Store config name for plot titles
+        self.config_name = config.get('config_name', 'default')
+        
         # Training parameters with improved defaults
         self.num_episodes = config.get('num_episodes', 1000)
         self.max_steps_per_episode = config.get('max_steps_per_episode', 100)
@@ -537,7 +540,7 @@ class HierarchicalRLTrainer:
         
         # Create a comprehensive figure with multiple subplots
         fig, axes = plt.subplots(2, 3, figsize=(20, 12))
-        fig.suptitle(f'SAGIN RL Training Results - {timestamp}', fontsize=16, fontweight='bold')
+        fig.suptitle(f'SAGIN RL Training Results - {self.config_name} - {timestamp}', fontsize=16, fontweight='bold')
         
         # 1. Central Agent Episode Rewards (without moving average)
         ax1 = axes[0, 0]

@@ -356,7 +356,9 @@ class SAGINDemo:
             }
             
             # Create trainer config with training parameters
+            # Create trainer configuration with config name
             trainer_config = {
+                'config_name': config_name,  # Add config name for plot titles
                 'env_config': rl_config,
                 'num_episodes': episodes,
                 'central_update_frequency': 5,

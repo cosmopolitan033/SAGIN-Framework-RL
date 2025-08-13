@@ -49,6 +49,10 @@ class SAGINNetwork:
         self.satellite_constellation = SatelliteConstellation(self.system_params)
         self.task_manager = TaskManager(self.system_params)
         
+        # Disable time-of-day variation for fair orchestration comparison
+        # This prevents heuristic methods from appearing to "learn" when they're just responding to changing load
+        self.task_manager.enable_time_variation = False
+        
         # Network topology
         self.grid = None  # Will be set when topology is configured
         
@@ -70,6 +74,10 @@ class SAGINNetwork:
         # Performance tracking
         self.metrics = NetworkMetrics()
         self.metrics_history: List[NetworkMetrics] = []
+        
+        # Windowed tracking for stable metrics in heuristic comparisons
+        self.recent_load_imbalances = []  # Track load imbalance per epoch
+        self.window_size = 20  # Match the task manager window size
         
         # Decision history for analysis
         self.decision_history: List[Dict[str, Any]] = []
@@ -477,10 +485,13 @@ class SAGINNetwork:
         if verbose and expired_count > 0:
             print(f"  🗑️  Cleaned up {expired_count} expired tasks")
         
-        # 7. Update metrics
+        # 7. Finalize epoch for windowed success rate tracking BEFORE metrics update
+        self.task_manager.finalize_epoch()
+        
+        # 8. Update metrics (now with proper windowed calculation)
         self._update_metrics()
         
-        # 8. Advance time
+        # 9. Advance time
         self.current_time += dt
         self.epoch_count += 1
         
@@ -668,7 +679,20 @@ class SAGINNetwork:
         task_metrics = self.task_manager.get_system_metrics()
         
         # Calculate load imbalance
-        load_imbalance = self._calculate_load_imbalance()
+        current_load_imbalance = self._calculate_load_imbalance()
+        
+        # Add to windowed tracking
+        self.recent_load_imbalances.append(current_load_imbalance)
+        if len(self.recent_load_imbalances) > self.window_size:
+            self.recent_load_imbalances.pop(0)
+        
+        # Use windowed average for stable metrics in heuristic comparisons
+        if len(self.recent_load_imbalances) >= 3:
+            load_imbalance = sum(self.recent_load_imbalances) / len(self.recent_load_imbalances)
+            print(f"DEBUG: Windowed Load Imbalance - Current: {current_load_imbalance:.4f}, Windowed: {load_imbalance:.4f}")
+        else:
+            load_imbalance = current_load_imbalance
+            print(f"DEBUG: Current Load Imbalance (early epochs): {load_imbalance:.4f}")
         
         # Calculate utilization
         uav_utilization = self._calculate_uav_utilization()

@@ -98,7 +98,12 @@ def _apply_baseline_performance_degradation(self):
             uav.cpu_capacity = uav._original_cpu_capacity * degradation_factor
     
     # SIGNIFICANTLY increase task failure rate due to poor positioning and load balancing
+    # Use deterministic seed based on epoch for consistent behavior across runs
     import random
+    # Create consistent random behavior based on epoch number (not time-dependent trends)
+    epoch_seed = self.epoch_count % 100  # Cycle every 100 epochs for consistency
+    random.seed(42 + epoch_seed)  # Fixed base seed + epoch variation
+    
     if random.random() < 0.25:  # 25% chance of task failures (was 8%)
         # Affect more regions due to poor baseline load distribution
         affected_regions = list(self.regions.keys())[:max(1, len(self.regions) // 3)]
@@ -121,6 +126,9 @@ def _apply_baseline_performance_degradation(self):
                     if not hasattr(satellite, '_original_delay'):
                         satellite._original_delay = satellite.additional_processing_delay
                     satellite.additional_processing_delay = satellite._original_delay * 1.5  # 50% longer delays
+    
+    # Reset random seed to avoid affecting other systems
+    random.seed()
 
 
 def _restore_baseline_performance(self):

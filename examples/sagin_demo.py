@@ -525,7 +525,12 @@ class SAGINDemo:
         # Use custom epochs if provided, otherwise use config default
         simulation_epochs = epochs if epochs is not None else config.simulation.total_epochs
         
-        print(f"\nRunning {simulation_epochs}-epoch simulation with {config.simulation.logging_level} logging...")
+        # Add warm-up epochs to eliminate initial transients and get stable metrics
+        warmup_epochs = 30
+        total_epochs_with_warmup = simulation_epochs + warmup_epochs
+        
+        print(f"\n🔥 Running {total_epochs_with_warmup}-epoch simulation ({warmup_epochs} warm-up + {simulation_epochs} recorded epochs)")
+        print(f"   First {warmup_epochs} epochs will be discarded to eliminate initial transients...")
         
         # Track metrics
         self.metrics_history = []
@@ -534,34 +539,45 @@ class SAGINDemo:
             """Track progress and metrics."""
             # Capture metrics every epoch for smooth plotting curves
             metrics = network.metrics
-            self.metrics_history.append({
-                'epoch': epoch,
-                'success_rate': metrics.success_rate,
-                'average_latency': metrics.average_latency,
-                'load_imbalance': metrics.load_imbalance,
-                'uav_utilization': metrics.uav_utilization,
-                'satellite_utilization': metrics.satellite_utilization,
-                'tasks_generated': metrics.total_tasks_generated,
-                'tasks_completed': metrics.total_tasks_completed,
-                'energy_consumption': getattr(metrics, 'energy_consumption', 0.0),
-                'coverage_percentage': getattr(metrics, 'coverage_percentage', 100.0)
-            })
+            
+            # Only record metrics AFTER warm-up period
+            if epoch > warmup_epochs:
+                # Adjust epoch number to start from 1 after warm-up
+                recorded_epoch = epoch - warmup_epochs
+                self.metrics_history.append({
+                    'epoch': recorded_epoch,
+                    'success_rate': metrics.success_rate,
+                    'average_latency': metrics.average_latency,
+                    'load_imbalance': metrics.load_imbalance,
+                    'uav_utilization': metrics.uav_utilization,
+                    'satellite_utilization': metrics.satellite_utilization,
+                    'tasks_generated': metrics.total_tasks_generated,
+                    'tasks_completed': metrics.total_tasks_completed,
+                    'energy_consumption': getattr(metrics, 'energy_consumption', 0.0),
+                    'coverage_percentage': getattr(metrics, 'coverage_percentage', 100.0)
+                })
             
             # Print progress only at intervals to avoid spam
             if epoch % config.simulation.progress_interval == 0:
-                print(f"Epoch {epoch:3d}: Success: {metrics.success_rate:.3f}, "
-                      f"Latency: {metrics.average_latency:.3f}s, "
-                      f"Load: {metrics.load_imbalance:.3f}")
+                if epoch <= warmup_epochs:
+                    print(f"Warm-up {epoch:2d}/{warmup_epochs}: Success: {metrics.success_rate:.3f}, "
+                          f"Latency: {metrics.average_latency:.3f}s, "
+                          f"Load: {metrics.load_imbalance:.3f}")
+                else:
+                    recorded_epoch = epoch - warmup_epochs
+                    print(f"Epoch {recorded_epoch:3d}: Success: {metrics.success_rate:.3f}, "
+                          f"Latency: {metrics.average_latency:.3f}s, "
+                          f"Load: {metrics.load_imbalance:.3f}")
         
-        # Run simulation
+        # Run simulation with warm-up epochs
         if config.simulation.detailed_interval > 0 and config.simulation.logging_level == "high":
             print(f"\n🔍 Running with detailed logging every {config.simulation.detailed_interval} epochs...")
             network.run_simulation_with_detailed_logging(
-                simulation_epochs, config.simulation.detailed_interval, progress_callback
+                total_epochs_with_warmup, config.simulation.detailed_interval, progress_callback
             )
         else:
             print(f"\n📊 Running standard simulation...")
-            network.run_simulation(simulation_epochs, progress_callback)
+            network.run_simulation(total_epochs_with_warmup, progress_callback)
         
         # Store simulation time
         self._simulation_time = time.time() - self._simulation_start_time

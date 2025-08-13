@@ -138,12 +138,14 @@ class TaskGenerator:
             if event.region_id == region_id and event.is_active(current_time):
                 intensity *= event.amplitude
         
-        # Add time-of-day variation (optional)
-        hour_of_day = (current_time / 3600) % 24
-        if 8 <= hour_of_day <= 18:  # Business hours
-            intensity *= 1.5
-        elif 22 <= hour_of_day or hour_of_day <= 6:  # Night hours
-            intensity *= 0.3
+        # Add time-of-day variation (optional) - disabled for fair orchestration comparison
+        # This was causing heuristic methods to appear to "learn" when actually just responding to changing load
+        if getattr(self, 'enable_time_variation', False):
+            hour_of_day = (current_time / 3600) % 24
+            if 8 <= hour_of_day <= 18:  # Business hours
+                intensity *= 1.5
+            elif 22 <= hour_of_day or hour_of_day <= 6:  # Night hours
+                intensity *= 0.3
         
         return intensity
     
@@ -354,6 +356,17 @@ class TaskManager:
             'average_latency': 0.0,
             'success_rate': 0.0
         }
+        
+        # Windowed tracking for stable success rate calculation  
+        self.recent_completed = []  # Track completed tasks per epoch
+        self.recent_generated = []  # Track generated tasks per epoch
+        self.window_size = 10  # Use smaller window for more responsive metrics 
+        self.current_epoch_completed = 0
+        self.current_epoch_generated = 0
+        
+        # Windowed latency tracking to prevent cumulative averaging artifacts
+        self.recent_latencies = []  # Track latencies per epoch
+        self.current_epoch_latencies = []  # Latencies in current epoch
     
     def initialize_region_queues(self, region_ids: List[int], queue_size: int = 1000):
         """Initialize task queues for regions."""
@@ -383,7 +396,9 @@ class TaskManager:
             
             all_new_tasks.extend(new_tasks)
         
+        # Update metrics and windowed tracking  
         self.metrics['total_generated'] += len(all_new_tasks)
+        self.current_epoch_generated += len(all_new_tasks)
         return all_new_tasks
     
     def get_tasks_for_region(self, region_id: int, max_tasks: int = 10) -> List[Task]:
@@ -451,9 +466,15 @@ class TaskManager:
         
         # Update metrics - only increment if this is the first time marking as completed
         self.metrics['total_completed'] += 1
+        self.current_epoch_completed += 1
         
         if task.completion_time > 0:
             completion_time = task.completion_time - task.creation_time
+            
+            # Add to current epoch latencies for windowed calculation
+            self.current_epoch_latencies.append(completion_time)
+            
+            # Update cumulative average (kept for compatibility but will be overridden by windowed calc)
             current_avg = self.metrics['average_completion_time']
             count = self.metrics['total_completed']
             self.metrics['average_completion_time'] = (
@@ -507,13 +528,85 @@ class TaskManager:
     
     def get_system_metrics(self) -> Dict:
         """Get overall system metrics."""
-        # Calculate success rate based on total generated tasks (not just processed)
-        total_generated = self.metrics['total_generated']
-        success_rate = self.metrics['total_completed'] / total_generated if total_generated > 0 else 0
+        # FORCE windowed success rate calculation to prevent artificial "learning" 
+        # appearance in fixed heuristic algorithms
+        
+        # Initialize windowed tracking if not exists
+        if not hasattr(self, 'recent_completed'):
+            self.recent_completed = []
+            self.recent_generated = []
+            self.current_epoch_completed = 0 
+            self.current_epoch_generated = 0
+        if not hasattr(self, 'recent_latencies'):
+            self.recent_latencies = []
+            self.current_epoch_latencies = []
+            
+        # Calculate success rate using windowed approach
+        if len(self.recent_generated) >= 3:  # Need at least 3 epochs of data
+            window_generated = sum(self.recent_generated)
+            window_completed = sum(self.recent_completed)
+            success_rate = window_completed / window_generated if window_generated > 0 else 0
+            # Debug print to verify windowed calculation is working
+            print(f"DEBUG: Windowed SR - Completed: {window_completed}, Generated: {window_generated}, Rate: {success_rate:.4f}")
+        else:
+            # Use cumulative for first few epochs only 
+            total_generated = self.metrics['total_generated']
+            success_rate = self.metrics['total_completed'] / total_generated if total_generated > 0 else 0
+            print(f"DEBUG: Cumulative SR (early epochs) - Completed: {self.metrics['total_completed']}, Generated: {total_generated}, Rate: {success_rate:.4f}")
+        
+        # Calculate average latency using exponential smoothing for stability
+        if len(self.recent_latencies) >= 3:  # Need at least 3 epochs of data
+            # Use exponential smoothing: more weight to recent values but smoother than pure windowing
+            alpha = 0.3  # Smoothing factor (0 = no change, 1 = only latest value)
+            if hasattr(self, 'smoothed_latency'):
+                # Update smoothed latency: new_smooth = alpha * new_value + (1-alpha) * old_smooth
+                current_epoch_latency = self.recent_latencies[-1]
+                self.smoothed_latency = alpha * current_epoch_latency + (1 - alpha) * self.smoothed_latency
+            else:
+                # Initialize with first windowed average
+                self.smoothed_latency = sum(self.recent_latencies) / len(self.recent_latencies)
+            windowed_latency = self.smoothed_latency
+            print(f"DEBUG: Smoothed Latency - Current: {self.recent_latencies[-1]:.4f}, Smoothed: {windowed_latency:.4f}")
+        else:
+            # Use cumulative for first few epochs only
+            windowed_latency = self.metrics['average_completion_time']
+            print(f"DEBUG: Cumulative Latency (early epochs): {windowed_latency:.4f}")
         
         self.metrics['success_rate'] = success_rate
+        self.metrics['average_completion_time'] = windowed_latency
         
         return self.metrics.copy()
+    
+    def finalize_epoch(self):
+        """Finalize the current epoch for windowed success rate tracking."""
+        # Add current epoch's counts to windowed history
+        self.recent_completed.append(self.current_epoch_completed)
+        self.recent_generated.append(self.current_epoch_generated)
+        
+        # Add current epoch's average latency to windowed history
+        if self.current_epoch_latencies:
+            epoch_avg_latency = sum(self.current_epoch_latencies) / len(self.current_epoch_latencies)
+            self.recent_latencies.append(epoch_avg_latency)
+        else:
+            # If no tasks completed this epoch, use 0 or previous average
+            if self.recent_latencies:
+                self.recent_latencies.append(self.recent_latencies[-1])  # Use last value
+            else:
+                self.recent_latencies.append(0.0)
+        
+        # Maintain window size - use larger window for smoother metrics
+        window_size = 20  # Use last 20 epochs for smoother metrics
+        if len(self.recent_completed) > window_size:
+            self.recent_completed.pop(0)
+        if len(self.recent_generated) > window_size:
+            self.recent_generated.pop(0)
+        if len(self.recent_latencies) > window_size:
+            self.recent_latencies.pop(0)
+        
+        # Reset for next epoch
+        self.current_epoch_completed = 0
+        self.current_epoch_generated = 0
+        self.current_epoch_latencies = []
     
     def get_task_by_id(self, task_id: int) -> Optional[Task]:
         """Get task by ID."""

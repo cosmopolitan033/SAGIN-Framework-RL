@@ -105,28 +105,59 @@ class RLModelManager:
         
         # Save central agent
         central_path = os.path.join(model_path, "central_agent.pth")
-        torch.save({
-            'state_dict': central_agent.network.state_dict(),
-            'config': central_agent.config,
-            'training_losses': central_agent.training_losses
-        }, central_path)
+        
+        # Handle both Actor-Critic and legacy network architectures
+        if hasattr(central_agent, 'use_actor_critic') and central_agent.use_actor_critic:
+            # New Actor-Critic architecture
+            torch.save({
+                'actor_state_dict': central_agent.actor.state_dict(),
+                'critic_state_dict': central_agent.critic.state_dict(),
+                'config': central_agent.config,
+                'training_losses': central_agent.training_losses,
+                'actor_losses': getattr(central_agent, 'actor_losses', []),
+                'critic_losses': getattr(central_agent, 'critic_losses', []),
+                'architecture': 'actor_critic'
+            }, central_path)
+        else:
+            # Legacy single network architecture
+            torch.save({
+                'state_dict': central_agent.network.state_dict(),
+                'config': central_agent.config,
+                'training_losses': central_agent.training_losses,
+                'architecture': 'legacy'
+            }, central_path)
         
         # Save shared static UAV agent
         shared_static_path = os.path.join(model_path, "shared_static_uav_agent.pth")
+        
+        # SharedStaticUAVAgent uses q_network and target_q_network (DQN architecture)
         torch.save({
-            'state_dict': shared_static_uav_agent.network.state_dict(),
+            'q_network_state_dict': shared_static_uav_agent.q_network.state_dict(),
+            'target_q_network_state_dict': shared_static_uav_agent.target_q_network.state_dict(),
             'config': shared_static_uav_agent.config,
-            'training_losses': shared_static_uav_agent.training_losses,
-            'usage_count': shared_static_uav_agent.usage_count
+            'training_losses': getattr(shared_static_uav_agent, 'training_losses', []),
+            'usage_count': getattr(shared_static_uav_agent, 'usage_count', 0),
+            'action_space': shared_static_uav_agent.action_space,
+            'architecture': 'dqn'
         }, shared_static_path)
         
         # Save metadata
+        # Extract dimensions based on agent architecture
+        if hasattr(central_agent, 'use_actor_critic') and central_agent.use_actor_critic:
+            # Actor-Critic architecture
+            central_state_dim = central_agent.state_dim
+            central_action_dim = central_agent.action_dim
+        else:
+            # Legacy architecture with single network
+            central_state_dim = central_agent.network.feature_extractor[0].in_features
+            central_action_dim = central_agent.network.actor_head[-2].out_features
+        
         metadata = {
             **model_info,
             'architecture': 'central_plus_shared_static',
-            'central_state_dim': central_agent.network.feature_extractor[0].in_features,
-            'central_action_dim': central_agent.network.actor_head[-2].out_features,
-            'static_uav_usage_count': shared_static_uav_agent.usage_count
+            'central_state_dim': central_state_dim,
+            'central_action_dim': central_action_dim,
+            'static_uav_usage_count': getattr(shared_static_uav_agent, 'usage_count', 0)
         }
         
         metadata_path = os.path.join(model_path, "metadata.json")
@@ -166,23 +197,54 @@ class RLModelManager:
             action_dim=metadata['central_action_dim'],
             config=central_checkpoint['config']
         )
-        central_agent.network.load_state_dict(central_checkpoint['state_dict'])
-        central_agent.training_losses = central_checkpoint['training_losses']
+        
+        # Handle both Actor-Critic and legacy architectures
+        architecture = central_checkpoint.get('architecture', 'legacy')
+        if architecture == 'actor_critic' and hasattr(central_agent, 'actor'):
+            # New Actor-Critic architecture
+            central_agent.actor.load_state_dict(central_checkpoint['actor_state_dict'])
+            central_agent.critic.load_state_dict(central_checkpoint['critic_state_dict'])
+            central_agent.training_losses = central_checkpoint['training_losses']
+            if 'actor_losses' in central_checkpoint:
+                central_agent.actor_losses = central_checkpoint['actor_losses']
+            if 'critic_losses' in central_checkpoint:
+                central_agent.critic_losses = central_checkpoint['critic_losses']
+        else:
+            # Legacy single network architecture
+            central_agent.network.load_state_dict(central_checkpoint['state_dict'])
+            central_agent.training_losses = central_checkpoint['training_losses']
         
         # Load shared static UAV agent
         shared_static_path = os.path.join(model_path, "shared_static_uav_agent.pth")
         shared_static_checkpoint = torch.load(shared_static_path, map_location='cpu')
         
-        # Infer state dim from saved model
-        shared_state_dim = shared_static_checkpoint['state_dict']['model.0.weight'].shape[1]
+        # Handle DQN architecture (q_network + target_q_network)
+        architecture = shared_static_checkpoint.get('architecture', 'legacy')
+        if architecture == 'dqn':
+            # Infer state dim from saved Q-network
+            shared_state_dim = shared_static_checkpoint['q_network_state_dict']['model.0.weight'].shape[1]
+        else:
+            # Legacy format - infer from 'state_dict'
+            shared_state_dim = shared_static_checkpoint['state_dict']['model.0.weight'].shape[1]
         
         shared_static_uav_agent = SharedStaticUAVAgent(
             state_dim=shared_state_dim,
-            action_space=['local', 'dynamic', 'satellite'],
+            action_space=shared_static_checkpoint.get('action_space', ['local', 'dynamic', 'satellite']),
             config=shared_static_checkpoint['config']
         )
-        shared_static_uav_agent.network.load_state_dict(shared_static_checkpoint['state_dict'])
-        shared_static_uav_agent.training_losses = shared_static_checkpoint['training_losses']
+        
+        # Load appropriate state dicts based on architecture
+        if architecture == 'dqn':
+            # New DQN architecture
+            shared_static_uav_agent.q_network.load_state_dict(shared_static_checkpoint['q_network_state_dict'])
+            shared_static_uav_agent.target_q_network.load_state_dict(shared_static_checkpoint['target_q_network_state_dict'])
+        else:
+            # Legacy format - assume it was saved as 'network'
+            shared_static_uav_agent.q_network.load_state_dict(shared_static_checkpoint['state_dict'])
+            # Copy to target network for consistency
+            shared_static_uav_agent.target_q_network.load_state_dict(shared_static_checkpoint['state_dict'])
+        
+        shared_static_uav_agent.training_losses = shared_static_checkpoint.get('training_losses', [])
         shared_static_uav_agent.usage_count = shared_static_checkpoint.get('usage_count', 0)
         
         print(f"📂 Loaded model: {model_name}")

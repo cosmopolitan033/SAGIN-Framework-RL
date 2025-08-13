@@ -768,8 +768,23 @@ Delay: {getattr(config.satellites, 'processing_delay', 'N/A')}s
 Mode: {self.orchestration_mode.upper()}
 Epochs: {config.simulation.total_epochs}
 Log: {config.simulation.logging_level.upper()}
-Bursts: {len(config.tasks.burst_events) if config.tasks.burst_events else 0}
-"""
+Bursts: {len(config.tasks.burst_events) if config.tasks.burst_events else 0}"""
+
+            # Add RL-specific configuration if in RL mode
+            if self.orchestration_mode == 'rl' and hasattr(config, 'rl'):
+                rl_config_text = f"""
+
+🧠 RL TRAINING CONFIG
+{'='*25}
+Learning Rate: {getattr(config.rl, 'learning_rate', 'N/A')}
+Batch Size: {getattr(config.rl, 'batch_size', 'N/A')}
+Gamma: {getattr(config.rl, 'gamma', 'N/A')}
+Epsilon Start: {getattr(config.rl, 'epsilon_start', 'N/A')}
+Epsilon Decay: {getattr(config.rl, 'epsilon_decay', 'N/A')}
+Buffer Size: {getattr(config.rl, 'buffer_size', 'N/A')}
+Hidden Dim: {getattr(config.rl, 'hidden_dim', 'N/A')}
+Actor-Critic: {getattr(config.rl, 'use_actor_critic', 'N/A')}"""
+                config_text += rl_config_text
             
             # Display the configuration with better positioning
             ax5.text(0.02, 0.98, config_text, 

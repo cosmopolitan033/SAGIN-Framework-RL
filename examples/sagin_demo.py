@@ -462,11 +462,21 @@ class SAGINDemo:
                     else:
                         config_name = selection
                     
+                    # Ask for number of epochs
+                    default_epochs = get_sagin_config(config_name).simulation.total_epochs
+                    epochs_input = input(f"Number of epochs for evaluation (default: {default_epochs}): ").strip()
+                    epochs = int(epochs_input) if epochs_input else None
+                    
                     # Run evaluation
                     print(f"🔍 Evaluating model '{model_name}' on {config_name}...")
+                    if epochs:
+                        print(f"    Running for {epochs} epochs (+ 30 warm-up epochs)")
+                    else:
+                        print(f"    Running for {default_epochs} epochs (+ 30 warm-up epochs)")
+                    
                     self.orchestration_mode = "rl"
                     self.selected_rl_model = model_name
-                    network = self.run_simulation(config_name)
+                    network = self.run_simulation(config_name, epochs)
                     self.print_summary(network)
                     
                     # Option to plot results
@@ -1331,7 +1341,15 @@ def main():
                 if not demo.select_orchestration_mode():
                     continue  # User cancelled orchestration selection
                     
-                network = demo.run_simulation("small_test")
+                # Ask for number of epochs for quick test too
+                try:
+                    epochs_input = input("Number of simulation epochs for quick test (press Enter for config default): ").strip()
+                    epochs = int(epochs_input) if epochs_input else None
+                except ValueError:
+                    print("Invalid number, using config default")
+                    epochs = None
+                    
+                network = demo.run_simulation("small_test", epochs)
                 demo.print_summary(network)
                 
             elif choice == '5':
